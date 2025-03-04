@@ -1,0 +1,30 @@
+# Go
+bin/
+*.exe
+*.out
+vendor/
+go.sum
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Environment
+.env
+.env.local
+
+# Testing
+*.test
+*.cover
+
+# Build
+dist/
+build/
+
+# macOS
+.DS_Store
+
+# Logs
+*.log
