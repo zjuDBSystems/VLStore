@@ -245,22 +245,22 @@ func TestEmptyTree(t *testing.T) {
 // 测试带有数据的树的范围证明
 func TestInMemoryMBTree(t *testing.T) {
 	fanout := 4
-	n := 100 // 使用较小的值以加快测试速度
+	n := 1234 // 使用较小的值以加快测试速度
 
 	tree := NewBPlusTree(fanout)
 
 	// 插入数据
 	for i := 1; i <= n; i++ {
 		key := util.Key(i * 2)
-		value := []byte(fmt.Sprintf("value-%d", i*2))
+		value := []byte(fmt.Sprintf("value-%d", i * 2))
 		tree.Insert(key, value)
 	}
 
-	fmt.Println("完成插入")
+	fmt.Println("complete insertion")
 
 	// 测试所有可能的范围
-	for i := 1; i <= 10; i++ { // 限制范围以加快测试
-		for j := i; j <= 10; j++ {
+	for i := 1; i <= n; i++ { // 限制范围以加快测试
+		for j := i; j <= n; j++ {
 			startKey := util.Key(i)
 			endKey := util.Key(j)
 
@@ -268,24 +268,45 @@ func TestInMemoryMBTree(t *testing.T) {
 			hash := tree.ReconstructRangeProof(startKey, endKey, results, proof)
 
 			// 计算整棵树的哈希
-			var expectedHash util.H256
-			if tree.root != nil && tree.tmp != nil {
-				rootHash := tree.root.GetHash()
-				tmpHash := tree.tmp.GetHash()
-				var b []byte
-				b = append(b, rootHash[:]...)
-				b = append(b, tmpHash[:]...)
-				expectedHash = tree.hasher.HashBytes(b)
-			} else if tree.root != nil {
-				expectedHash = tree.root.GetHash()
-			} else if tree.tmp != nil {
-				expectedHash = tree.tmp.GetHash()
-			}
+			expectedHash := tree.root.GetHash()
 
 			if hash != expectedHash {
 				t.Errorf("范围 [%d, %d] 的哈希不匹配: 期望 %v, 得到 %v",
 					startKey, endKey, expectedHash, hash)
 			}
 		}
+	}
+}
+
+
+func TestInMemoryMBTree2(t *testing.T) {
+	fanout := 4
+	n := 1234 // 使用较小的值以加快测试速度
+
+	tree := NewBPlusTree(fanout)
+
+	// 插入数据
+	for i := 1; i <= n; i++ {
+		key := util.Key(i)
+		value := []byte(fmt.Sprintf("value-%d", i))
+		tree.Insert(key, value)
+	}
+
+	fmt.Println("完成插入")
+	// 测试所有可能的范围
+	startKey := util.Key(26)
+	endKey := util.Key(130)
+
+	results, proof := tree.GenerateRangeProof(startKey, endKey)
+	//fmt.Println("results", results)
+	//fmt.Println("proof", proof)
+	hash := tree.ReconstructRangeProof(startKey, endKey, results, proof)
+
+	// 计算整棵树的哈希
+	expectedHash := tree.root.GetHash()
+
+	if hash != expectedHash {
+		t.Errorf("范围 [%d, %d] 的哈希不匹配: 期望 %v, 得到 %v",
+			startKey, endKey, expectedHash, hash)
 	}
 }

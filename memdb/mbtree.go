@@ -6,71 +6,6 @@ import (
 	"fmt"
 )
 
-// 节点接口定义
-type node interface {
-	IsLeaf() bool
-	GetHash() util.H256
-	ComputeHash(hasher util.Hasher)
-}
-
-// 内部节点实现
-type internalNode struct {
-	Parent      *internalNode
-	Keys        []util.Key
-	Children    []node
-	ChildHashes []util.H256
-	Hash        util.H256
-}
-
-// 叶子节点实现
-type leafNode struct {
-	Parent    *internalNode
-	KeyValues []util.KeyValue
-	Next      *leafNode
-	Hash      util.H256
-}
-
-func (n *internalNode) IsLeaf() bool {
-	return false
-}
-
-func (n *internalNode) GetHash() util.H256 {
-	return n.Hash
-}
-
-func (n *internalNode) ComputeHash(hasher util.Hasher) {
-	var b []byte
-	for _, key := range n.Keys {
-		keyHash := hasher.HashKey(key)
-		b = append(b, keyHash[:]...)
-	}
-
-	for _, childHash := range n.ChildHashes {
-		b = append(b, childHash[:]...)
-	}
-
-	n.Hash = hasher.HashBytes(b)
-}
-
-func (n *leafNode) IsLeaf() bool {
-	return true
-}
-
-func (n *leafNode) GetHash() util.H256 {
-	return n.Hash
-}
-
-func (n *leafNode) ComputeHash(hasher util.Hasher) {
-	var b []byte
-	for _, kv := range n.KeyValues {
-		keyHash := hasher.HashKey(kv.Key)
-		valueHash := hasher.HashValue(kv.Value)
-		b = append(b, keyHash[:]...)
-		b = append(b, valueHash[:]...)
-	}
-	n.Hash = hasher.HashBytes(b)
-}
-
 type MBTree struct {
 	root   node
 	keyNum int32
@@ -91,6 +26,31 @@ func NewBPlusTree(fanout int) *MBTree {
 	}
 }
 
+// 获取树中叶子节点所有键值对
+func (t *MBTree) LoadAllKeyValues() []util.KeyValue {
+	result := make([]util.KeyValue, 0)
+
+	// 找到最左边的叶子节点
+	current := t.root
+	for !current.IsLeaf() {
+		current = current.(*internalNode).Children[0]
+	}
+
+	// 遍历叶子节点
+	for current != nil {
+		result = append(result, current.(*leafNode).KeyValues...)
+		current = current.(*leafNode).Next
+	}
+
+	// 获取临时节点中的键值对
+	if t.tmp != nil {
+		result = append(result, t.tmp.KeyValues...)
+	}
+
+	return result
+}
+
+// 单点查询，返回指定键的值
 func (t *MBTree) Search(key util.Key) (util.Value, bool) {
 	// 先检查临时节点
 	if t.tmp != nil {
@@ -153,6 +113,73 @@ func (t *MBTree) Search(key util.Key) (util.Value, bool) {
 	}
 }
 
+// 范围查询，返回指定范围内的所有键值对
+func (t *MBTree) RangeSearch(startKey, endKey util.Key) []util.KeyValue {
+	result := make([]util.KeyValue, 0)
+
+	// 检查临时节点中的键值对
+	if t.tmp != nil {
+		for _, kv := range t.tmp.KeyValues {
+			if kv.Key >= startKey && kv.Key <= endKey {
+				result = append(result, kv)
+			}
+		}
+	}
+
+	// 如果树为空，直接返回
+	if t.root == nil {
+		return result
+	}
+
+	// 找到第一个包含startKey的叶子节点
+	current := t.root
+	for !current.IsLeaf() {
+		internal := current.(*internalNode)
+
+		// 空检查
+		if len(internal.Keys) == 0 && len(internal.Children) == 0 {
+			return result
+		}
+
+		// 找到合适的子节点
+		childIndex := 0
+		for i := 0; i < len(internal.Keys); i++ {
+			if startKey >= internal.Keys[i] {
+				childIndex = i + 1
+				if childIndex >= len(internal.Children) {
+					childIndex = len(internal.Children) - 1
+				}
+			} else {
+				break
+			}
+		}
+
+		current = internal.Children[childIndex]
+	}
+
+	// 从找到的叶子节点开始遍历
+	leaf := current.(*leafNode)
+	for leaf != nil {
+		// 检查当前叶子节点中的键值对
+		for _, kv := range leaf.KeyValues {
+			if kv.Key >= startKey && kv.Key <= endKey {
+				result = append(result, kv)
+			}
+
+			// 如果已经超过了endKey，可以提前结束
+			if kv.Key > endKey {
+				return result
+			}
+		}
+
+		// 移动到下一个叶子节点
+		leaf = leaf.Next
+	}
+
+	return result
+}
+
+// 插入键值对
 func (t *MBTree) Insert(key util.Key, value util.Value) {
 	t.keyNum++
 
@@ -210,7 +237,7 @@ func (t *MBTree) insertLeafNode(leaf *leafNode) {
 	// 1. 更新叶子节点链表
 	if t.last != nil && t.last != leaf {
 		t.last.Next = leaf
-		t.last.ComputeHash(t.hasher) // 更新哈希
+		//t.last.ComputeHash(t.hasher) // 更新哈希
 	}
 	t.last = leaf
 
@@ -243,7 +270,7 @@ func (t *MBTree) insertLeafKeyToParent(leftParent *internalNode, key util.Key, l
 	}
 
 	// 2. 判断左兄弟节点的父节点是否已满
-	if leftParent != nil && len(leftParent.Children) < t.fanout {
+	if len(leftParent.Children) < t.fanout {
 		// 父节点未满，直接追加
 		leftParent.Keys = append(leftParent.Keys, key)
 		leftParent.Children = append(leftParent.Children, leaf)
@@ -263,9 +290,7 @@ func (t *MBTree) insertLeafKeyToParent(leftParent *internalNode, key util.Key, l
 
 		// 递归处理上层
 		var leftGrandParent *internalNode = nil
-		if leftParent != nil {
-			leftGrandParent = leftParent.Parent
-		}
+		leftGrandParent = leftParent.Parent
 		t.insertInternalKeyToParent(leftGrandParent, key, newParent)
 	}
 }
@@ -287,7 +312,9 @@ func (t *MBTree) insertInternalKeyToParent(leftParent *internalNode, key util.Ke
 
 			// 更新关系
 			oldRoot.Parent = newRoot
+			oldRoot.ParentId = 0
 			internal.Parent = newRoot
+			internal.ParentId = 1
 
 			t.root = newRoot
 			return
@@ -295,12 +322,13 @@ func (t *MBTree) insertInternalKeyToParent(leftParent *internalNode, key util.Ke
 	}
 
 	// 2. 判断左兄弟节点的父节点是否已满
-	if leftParent != nil && len(leftParent.Children) < t.fanout {
+	if len(leftParent.Children) < t.fanout {
 		// 父节点未满，直接追加
 		leftParent.Keys = append(leftParent.Keys, key)
 		leftParent.Children = append(leftParent.Children, internal)
 		leftParent.ChildHashes = append(leftParent.ChildHashes, internal.Hash)
 		internal.Parent = leftParent
+		internal.ParentId = len(leftParent.Children) - 1
 		leftParent.ComputeHash(t.hasher)
 	} else {
 		// 父节点已满或不存在，需要创建新的父节点
@@ -312,12 +340,10 @@ func (t *MBTree) insertInternalKeyToParent(leftParent *internalNode, key util.Ke
 
 		// 更新关系
 		internal.Parent = newParent
-
+		internal.ParentId = 0
 		// 递归处理上层
 		var leftGrandParent *internalNode = nil
-		if leftParent != nil {
-			leftGrandParent = leftParent.Parent
-		}
+		leftGrandParent = leftParent.Parent
 		t.insertInternalKeyToParent(leftGrandParent, key, newParent)
 	}
 }
@@ -412,363 +438,294 @@ func (t *MBTree) countNodes(n node) int {
 	return count
 }
 
-// RangeQuery 执行范围查询，返回指定范围内的所有键值对
-func (t *MBTree) RangeSearch(startKey, endKey util.Key) []util.KeyValue {
-	result := make([]util.KeyValue, 0)
+// 节点接口定义
+type node interface {
+	IsLeaf() bool
+	GetHash() util.H256
+	ComputeHash(hasher util.Hasher)
+	SearchProveIdxRange(startKey, endKey util.Key) (int, int)
+}
 
-	// 检查临时节点中的键值对
-	if t.tmp != nil {
-		for _, kv := range t.tmp.KeyValues {
-			if kv.Key >= startKey && kv.Key <= endKey {
-				result = append(result, kv)
-			}
+// 内部节点实现
+type internalNode struct {
+	Parent      *internalNode
+	ParentId    int
+	Keys        []util.Key
+	Children    []node
+	ChildHashes []util.H256
+	Hash        util.H256
+}
+
+func (n *internalNode) IsLeaf() bool {
+	return false
+}
+
+func (n *internalNode) GetHash() util.H256 {
+	return n.Hash
+}
+
+func (n *internalNode) ComputeHash(hasher util.Hasher) {
+	var b []byte
+	for _, key := range n.Keys {
+		keyHash := hasher.HashKey(key)
+		b = append(b, keyHash[:]...)
+	}
+
+	for _, childHash := range n.ChildHashes {
+		b = append(b, childHash[:]...)
+	}
+
+	n.Hash = hasher.HashBytes(b)
+
+	// recursively update the hash of its parent node
+	if n.Parent != nil {
+		n.Parent.ChildHashes[n.ParentId] = n.Hash
+		n.Parent.ComputeHash(hasher)
+	}
+
+}
+
+// search the index range of the searched key range in the internal node
+func (n *internalNode) SearchProveIdxRange(startKey, endKey util.Key) (int, int) {
+	i := 0
+	num := len(n.Keys)
+
+	for i < num {
+		if startKey < n.Keys[i] {
+			break
+		}
+		i++
+	}
+
+	j := 0
+	for j < num {
+		if endKey < n.Keys[j] {
+			break
+		}
+		j++
+	}
+
+	return i, j
+}
+
+// 叶子节点实现
+type leafNode struct {
+	Parent    *internalNode
+	KeyValues []util.KeyValue
+	Next      *leafNode
+	Hash      util.H256
+}
+
+func (n *leafNode) IsLeaf() bool {
+	return true
+}
+
+func (n *leafNode) GetHash() util.H256 {
+	return n.Hash
+}
+
+func (n *leafNode) ComputeHash(hasher util.Hasher) {
+	var b []byte
+	for _, kv := range n.KeyValues {
+		keyHash := hasher.HashKey(kv.Key)
+		valueHash := hasher.HashValue(kv.Value)
+		b = append(b, keyHash[:]...)
+		b = append(b, valueHash[:]...)
+	}
+	n.Hash = hasher.HashBytes(b)
+}
+
+func (n *leafNode) SearchProveIdxRange(startKey, endKey util.Key) (int, int) {
+	i := 0
+	num := len(n.KeyValues)
+
+	for i < num-1 {
+		// if key is smaller or equal to the first key in the leaf node, index is 0
+		if startKey <= n.KeyValues[0].Key {
+			break
+		} else if startKey >= n.KeyValues[i].Key && startKey < n.KeyValues[i+1].Key {
+			// if key[i] <= key < key[i+1], index is i
+			break
+		} else {
+			// otherwise, increment i until i == n - 1, which is the last index of the leaf node
+			i++
 		}
 	}
 
-	// 如果树为空，直接返回
-	if t.root == nil {
-		return result
+	j := 0
+	for j < num-1 {
+		if endKey <= n.KeyValues[0].Key {
+			break
+		} else if endKey >= n.KeyValues[j].Key && endKey < n.KeyValues[j+1].Key {
+			break
+		} else {
+			j++
+		}
 	}
 
-	// 找到第一个包含startKey的叶子节点
-	current := t.root
-	for !current.IsLeaf() {
-		internal := current.(*internalNode)
-
-		// 空检查
-		if len(internal.Keys) == 0 && len(internal.Children) == 0 {
-			return result
-		}
-
-		// 找到合适的子节点
-		childIndex := 0
-		for i := 0; i < len(internal.Keys); i++ {
-			if startKey >= internal.Keys[i] {
-				childIndex = i + 1
-				if childIndex >= len(internal.Children) {
-					childIndex = len(internal.Children) - 1
-				}
-			} else {
-				break
-			}
-		}
-
-		current = internal.Children[childIndex]
-	}
-
-	// 从找到的叶子节点开始遍历
-	leaf := current.(*leafNode)
-	for leaf != nil {
-		// 检查当前叶子节点中的键值对
-		for _, kv := range leaf.KeyValues {
-			if kv.Key >= startKey && kv.Key <= endKey {
-				result = append(result, kv)
-			}
-
-			// 如果已经超过了endKey，可以提前结束
-			if kv.Key > endKey {
-				return result
-			}
-		}
-
-		// 移动到下一个叶子节点
-		leaf = leaf.Next
-	}
-
-	return result
+	return i, j
 }
 
 // Proof of a range query, each level consist of a vector of MB-Tree nodes
+type RangeProof struct {
+	Levels [][]level
+}
+
+// store the start_idx and end_idx of the searched entries in the node
 type level struct {
 	StartIdx int
 	EndIdx   int
 	Node     node
 }
 
-type RangeProof struct {
-	Levels [][]level
-	// 添加额外字段来存储tmp节点或root节点的哈希
-	ExtraHash util.H256
-	// 标识proof是来自主树还是tmp节点
-	FromMainTree bool
-}
-
 func (t *MBTree) GenerateRangeProof(startKey, endKey util.Key) ([]util.KeyValue, RangeProof) {
-	// 初始化range proof
+	// init a range proof
 	proof := RangeProof{
 		Levels: make([][]level, 0),
 	}
 
-	// 初始化结果数组
+	// init a result set
 	results := make([]util.KeyValue, 0)
 
-	// 首先检查tmp节点
-	tmpResults := make([]util.KeyValue, 0)
-	if t.tmp != nil {
-		for _, kv := range t.tmp.KeyValues {
-			if kv.Key >= startKey && kv.Key <= endKey {
-				tmpResults = append(tmpResults, kv)
-			}
-		}
+	// if there is a tmp node, commit it to the main tree
+	if t.tmp != nil && len(t.tmp.KeyValues) > 0 {
+		t.commitTmpNode()
 	}
 
-	// 如果在tmp节点中找到了所有结果
-	if len(tmpResults) > 0 {
-		// 创建tmp节点的证明
-		tmpProof := make([]level, 0)
-
-		// 找到tmp节点中符合条件的索引范围
-		startIdx, endIdx := 0, 0
-		if t.tmp != nil {
-			startIdx, endIdx = t.searchProveIdxRange(t.tmp, startKey, endKey)
-			tmpProof = append(tmpProof, level{
-				StartIdx: startIdx,
-				EndIdx:   endIdx,
-				Node:     t.tmp,
-			})
-		}
-
-		proof.Levels = append(proof.Levels, tmpProof)
-		proof.FromMainTree = false
-
-		// 如果主树存在，添加主树根节点的哈希
-		if t.root != nil {
-			proof.ExtraHash = t.root.GetHash()
-		}
-
-		return tmpResults, proof
-	}
-
-	// 如果树为空，直接返回
+	// if main tree is empty
 	if t.root == nil {
-		return []util.KeyValue{}, proof
+		return results, proof
 	}
 
-	// 创建队列来遍历树
+	// create a queue to help traverse the tree
 	queue := make([]node, 0)
 	queue = append(queue, t.root)
 
-	// 计数器帮助确定每层节点数量
-	prevCnt := 1
-	curCnt := 0
+	// some counter to help determine the number of nodes in the level
+	prevCount := 1
+	curCount := 0
 
-	// 当前层的临时证明
+	// a temporary proof for the current level
 	curLevelProof := make([]level, 0)
 
-	// 遍历树直到队列为空
+	// traverse the tree in a while loop until the queue is empty
 	for len(queue) > 0 {
 		curNode := queue[0]
 		queue = queue[1:]
-		prevCnt--
+		// decrease the node counter of the previous level
+		prevCount--
 
 		if !curNode.IsLeaf() {
-			// 内部节点
+			// the node is an internal node, retrieve the reference of the internal node
 			internal := curNode.(*internalNode)
-
-			// 获取子节点的位置范围
-			startIdx, endIdx := t.searchProveIdxRange(curNode, startKey, endKey)
-
-			// 更新当前层节点计数
-			curCnt += endIdx - startIdx + 1
-
-			// 将当前节点添加到证明中
+			// given the start and end, get the position range of the child nodes
+			startIdx, endIdx := internal.SearchProveIdxRange(startKey, endKey)
+			// update the node counter for the level
+			curCount += endIdx - startIdx + 1
+			// add the cur_node to the proof as well as the starting and ending position of the traversed entries
 			curLevelProof = append(curLevelProof, level{
 				StartIdx: startIdx,
 				EndIdx:   endIdx,
 				Node:     curNode,
 			})
-
-			// 将对应的子节点添加到队列
-			for idx := startIdx; idx <= endIdx; idx++ {
-				childNode := internal.Children[idx]
-				queue = append(queue, childNode)
+			// add the corresponding child nodes to the queue
+			for i := startIdx; i <= endIdx; i++ {
+				queue = append(queue, internal.Children[i])
 			}
 		} else {
-			// 叶子节点
+			// the node is a leaf node, retrieve the reference of the leaf node
 			leaf := curNode.(*leafNode)
-
-			// 获取叶子节点的位置范围
-			startIdx, endIdx := t.searchProveIdxRange(curNode, startKey, endKey)
-
-			// 更新当前层节点计数
-			curCnt += endIdx - startIdx + 1
-
-			// 将当前节点添加到证明中
+			// get the position range of the leaf node
+			startIdx, endIdx := leaf.SearchProveIdxRange(startKey, endKey)
+			// update the node counter for the level
+			curCount += endIdx - startIdx + 1
+			// add the cur_node to the proof as well as the starting and ending position of the traversed entries
 			curLevelProof = append(curLevelProof, level{
 				StartIdx: startIdx,
 				EndIdx:   endIdx,
 				Node:     curNode,
 			})
-
-			// 将对应的搜索条目添加到结果中
-			for id := startIdx; id <= endIdx; id++ {
-				keyValue := leaf.KeyValues[id]
-				results = append(results, keyValue)
+			// add the corresponding searched entries to the value_vec
+			for i := startIdx; i <= endIdx; i++ {
+				results = append(results, leaf.KeyValues[i])
 			}
 		}
 
-		if prevCnt == 0 {
-			// 如果prevCnt=0，开始新的一层
-			prevCnt = curCnt
-			curCnt = 0
+		// if the previous level is traversed, add the proof to the final proof
+		if prevCount == 0 {
+			prevCount = curCount
+			curCount = 0
 
-			// 将当前层的临时证明添加到最终证明中
+			// add the proof of the current level to the final proof
 			proof.Levels = append(proof.Levels, curLevelProof)
+			// clear the temporary proof for the current level
 			curLevelProof = make([]level, 0)
 		}
 	}
-
-	// 设置proof来源为主树
-	proof.FromMainTree = true
-
-	// 添加tmp节点的哈希
-	if t.tmp != nil {
-		proof.ExtraHash = t.tmp.GetHash()
-	}
-
 	return results, proof
 }
 
-// searchProveIdxRange 根据范围查询的边界确定节点中需要遍历的条目范围
-func (t *MBTree) searchProveIdxRange(n node, startKey, endKey util.Key) (int, int) {
-	if n.IsLeaf() {
-		leaf := n.(*leafNode)
-		startIdx := 0
-		endIdx := len(leaf.KeyValues) - 1
-
-		// 找到第一个大于等于startKey的位置
-		for i, kv := range leaf.KeyValues {
-			if kv.Key >= startKey {
-				startIdx = i
-				break
-			}
-		}
-
-		// 找到最后一个小于等于endKey的位置
-		for i := len(leaf.KeyValues) - 1; i >= 0; i-- {
-			if leaf.KeyValues[i].Key <= endKey {
-				endIdx = i
-				break
-			}
-		}
-
-		return startIdx, endIdx
-	} else {
-		internal := n.(*internalNode)
-		startIdx := 0
-		endIdx := len(internal.Children) - 1
-
-		// 找到第一个可能包含startKey的子节点
-		for i := 0; i < len(internal.Keys); i++ {
-			if startKey <= internal.Keys[i] {
-				break
-			}
-			startIdx = i + 1
-		}
-
-		// 找到最后一个可能包含endKey的子节点
-		for i := len(internal.Keys) - 1; i >= 0; i-- {
-			if endKey >= internal.Keys[i] {
-				endIdx = i + 1
-				break
-			}
-		}
-
-		return startIdx, endIdx
-	}
-}
-
 func (t *MBTree) ReconstructRangeProof(startKey, endKey util.Key, results []util.KeyValue, proof RangeProof) util.H256 {
-	// 如果结果为空且证明为空，返回默认哈希
+	// if the result is empty and the proof is empty, return the default hash
 	if len(results) == 0 && len(proof.Levels) == 0 {
 		return util.H256{}
 	}
-
-	// 验证标志
+	// a flag to determine whethere there is an verification error
 	validate := true
-
-	// 根据proof来源确定要验证的哈希
-	var computeRootHash util.H256
-
-	if proof.FromMainTree {
-		// 如果proof来自主树，根哈希是证明第一层的单个节点的摘要
-		computeRootHash = proof.Levels[0][0].Node.GetHash()
-	} else {
-		// 如果proof来自tmp节点，根哈希是tmp节点的摘要
-		if len(proof.Levels) > 0 && len(proof.Levels[0]) > 0 {
-			computeRootHash = proof.Levels[0][0].Node.GetHash()
-		}
-	}
-
-	// 临时向量存储下一层的哈希值
+	// the root hash from the proof should be the first level's single node's digest
+	computeRootHash := proof.Levels[0][0].Node.GetHash()
+	// a temporary vector to store the hash values of the next level
 	nextLevelHashes := make([]util.H256, 0)
-
-	// 遍历证明中的每一层
+	// iterate each of the levels in the proof
 	for i, levelProof := range proof.Levels {
-		// 检查nextLevelHashes中的哈希值是否与当前层重新计算的哈希值匹配
+		// check whether the hash valeus in the next_level_hashes vector (constructed during the prevous level) match the re-computed one for the current level or not
 		if i != 0 {
 			computedHashes := make([]util.H256, 0)
 			for _, curLevelNode := range levelProof {
 				computedHashes = append(computedHashes, curLevelNode.Node.GetHash())
 			}
-
-			// 比较哈希值
+			//fmt.Println("computedHashes", computedHashes)
+			//fmt.Println("nextLevelHashes", nextLevelHashes)
 			if !compareHashes(computedHashes, nextLevelHashes) {
+				// not match
 				validate = false
 				break
 			}
 
-			// 开始新的一层，清除哈希值
-			nextLevelHashes = make([]util.H256, 0)
+			// start another level by clearing the hashes
+			nextLevelHashes = nextLevelHashes[:0]
 		}
 
-		// 结果向量中的ID
+		// id of the result in the vector of the proof
 		leafID := 0
-
 		for _, innerProof := range levelProof {
-			// 从层证明中检索节点引用
+			// retrieve the node from the level proof
 			node := innerProof.Node
-
-			// 从层证明中检索起始和结束位置
+			// retrieve the start and end positions from the level proof
 			startIdx := innerProof.StartIdx
 			endIdx := innerProof.EndIdx
-
 			if !node.IsLeaf() {
-				// 节点是内部节点
+				/// node is an internal node
 				internal := node.(*internalNode)
-
-				// 将遍历的子节点的哈希值添加到nextLevelHashes
+				// add the hash values of the traversed child nodes to the next_level_hashes
 				for id := startIdx; id <= endIdx; id++ {
 					h := internal.ChildHashes[id]
 					nextLevelHashes = append(nextLevelHashes, h)
 				}
 			} else {
-				// 节点是叶子节点
+				// node is a leaf node
 				leaf := node.(*leafNode)
-
-				// 检查结果向量中的值与证明中的值
-				for i, id := range makeRange(startIdx, endIdx) {
-					if id >= len(leaf.KeyValues) {
-						validate = false
-						break
-					}
-
-					keyValue := leaf.KeyValues[id]
-					if leafID >= len(results) {
-						validate = false
-						break
-					}
-
-					if i == 0 {
+				// check the values in the result vector against the values in the proof
+				for i := startIdx; i <= endIdx; i++ {
+					keyValue := leaf.KeyValues[i]
+					if i == startIdx {
 						if results[leafID].Key != keyValue.Key || !bytes.Equal(results[leafID].Value, keyValue.Value) {
 							validate = false
 							break
 						}
 					} else {
 						k := keyValue.Key
-						if k < startKey || k > endKey ||
-							results[leafID].Key != keyValue.Key ||
-							!bytes.Equal(results[leafID].Value, keyValue.Value) {
+						if k < startKey || k > endKey || results[leafID].Key != keyValue.Key || !bytes.Equal(results[leafID].Value, keyValue.Value) {
 							validate = false
 							break
 						}
@@ -783,23 +740,7 @@ func (t *MBTree) ReconstructRangeProof(startKey, endKey util.Key, results []util
 		return util.H256{}
 	}
 
-	// 计算整棵树的哈希：hash(rootHash || extraHash)
-	var finalHash util.H256
-	if proof.FromMainTree {
-		// 如果proof来自主树，计算hash(rootHash || tmpHash)
-		var b []byte
-		b = append(b, computeRootHash[:]...)
-		b = append(b, proof.ExtraHash[:]...)
-		finalHash = t.hasher.HashBytes(b)
-	} else {
-		// 如果proof来自tmp节点，计算hash(rootHash || tmpHash)
-		var b []byte
-		b = append(b, proof.ExtraHash[:]...) // 主树的根哈希
-		b = append(b, computeRootHash[:]...) // tmp节点的哈希
-		finalHash = t.hasher.HashBytes(b)
-	}
-
-	return finalHash
+	return computeRootHash
 }
 
 // 辅助函数，比较两个哈希数组是否相等
@@ -813,13 +754,4 @@ func compareHashes(a, b []util.H256) bool {
 		}
 	}
 	return true
-}
-
-// 辅助函数，生成范围内的整数序列
-func makeRange(min, max int) []int {
-	result := make([]int, max-min+1)
-	for i := range result {
-		result[i] = min + i
-	}
-	return result
 }
