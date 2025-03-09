@@ -7,6 +7,7 @@ import (
 
 const (
     PAGE_SIZE = 4096
+    MAX_NUM_HASH_IN_PAGE = PAGE_SIZE / util.H256_SIZE - 1 // dedeuction of one is because we need to store some meta-data (i.e., num_of_hash) in the page
 )
 
 /* Structure of the page with default 4096 byte
@@ -94,4 +95,55 @@ func (p *Page) ToValueVector() []util.Value {
     }
 
     return v
+}
+
+/* 
+Write hash vector to the page
+4 bytes num of hash | hash_0, hash_1, ...
+*/
+func NewPageFromHashVector(hashes []util.H256) *Page {
+    // check the length of the vector is inside the maximum number in page
+    if len(hashes) > MAX_NUM_HASH_IN_PAGE {
+        panic("hash vector size is larger than page size")
+    }
+
+    p := NewPage()
+
+    // write the number of hash in the front of the page
+    numOfHashes := uint32(len(hashes))
+    binary.BigEndian.PutUint32(p.Data[0:4], numOfHashes)
+
+    // iteratively write each hash to the page
+    offset := 4
+    for _, hash := range hashes {
+        copy(p.Data[offset:offset+util.H256_SIZE], hash[:])
+        offset += util.H256_SIZE
+    }
+
+    return p
+}
+
+
+/*
+Read the hashes from a block
+*/
+func (p *Page) ToHashVector() []util.H256 {
+    hashes := make([]util.H256, 0)
+
+    // deserialize the number of hash in the page
+    numOfHashes := binary.BigEndian.Uint32(p.Data[0:4])
+
+    // deserialize each of the hash from the page
+    offset := 4
+    for i := uint32(0); i < numOfHashes; i++ {
+        if offset+util.H256_SIZE > PAGE_SIZE {
+            panic("exceed page size")
+        }
+        hash := util.H256{}
+        copy(hash[:], p.Data[offset:offset+util.H256_SIZE])
+        hashes = append(hashes, hash)
+        offset += util.H256_SIZE
+    }
+
+    return hashes
 }
