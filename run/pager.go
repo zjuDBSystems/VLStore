@@ -153,7 +153,7 @@ func (p *Page) ToHashVector() []util.H256 {
 Write the model vector to the page
 4 bytes model level | 4 bytes number of models | model 1 | model 2 | ...
 */
-func NewPageFromModelVector(models []*util.KeyModel, modelLevel uint32) *Page {
+func NewPageFromModelVector(models []*util.KeyModel, modelLevel int) *Page {
 	// check the length of the vector is inside the maximum number in page
 	if len(models) > MAX_NUM_MODEL_IN_PAGE {
 		panic("model vector size is larger than page size")
@@ -162,7 +162,7 @@ func NewPageFromModelVector(models []*util.KeyModel, modelLevel uint32) *Page {
 	p := NewPage()
 
 	// write the model level to the page
-	binary.BigEndian.PutUint32(p.Data[0:4], modelLevel)
+	binary.BigEndian.PutUint32(p.Data[0:4], uint32(modelLevel))
 
 	// write the number of models to the page
 	numModels := uint32(len(models))
@@ -206,6 +206,6 @@ func (p *Page) ToModelVector() *ModelCollections {
 
 	return &ModelCollections{
 		V:          models,
-		ModelLevel: modelLevel,
+		ModelLevel: int(modelLevel),
 	}
 }

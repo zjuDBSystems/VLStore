@@ -8,7 +8,7 @@ import (
 
 type MBTree struct {
 	root   node
-	keyNum int32
+	keyNum int
 	fanout int
 	tmp    *leafNode
 	last   *leafNode

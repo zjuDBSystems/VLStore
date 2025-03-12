@@ -276,7 +276,7 @@ A MHT constructor that generates and appends hashes to the file in a streaming f
 */
 type StreamMHTConstructor struct {
 	OutputMHTWriter *HashPageWriter // the writer of output MHT file
-	Fanout          int             // the fanout of the MHT
+	Fanout          int            // the fanout of the MHT
 	CacheVector     []util.H256     // a cache that keep a vector of at most fanout hash values of the level to compute the upper level's hash
 	NumOfHash       int             // the total number of hashes in the file
 	CntInLevel      int             // a counter for the focused level

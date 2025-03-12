@@ -24,7 +24,7 @@ func TestModelPager(t *testing.T) {
 			Start:     key,
 			Slope:     1.0,
 			Intercept: 2.0,
-			LastIndex: uint32(i),
+			LastIndex: i,
 		}
 		modelVec = append(modelVec, model)
 		err := writer.Append(model)
@@ -67,7 +67,7 @@ func TestModelPager(t *testing.T) {
 
 func TestStreamingModel(t *testing.T) {
 	//r := rand.New(rand.NewSource(1))
-	epsilon := int64(46)
+	epsilon := 46
 	n := 10000 // 减少数量以加快测试速度
 
 	keys := make([]util.Key, 0, n)
@@ -96,7 +96,7 @@ func TestStreamingModel(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Failed to append state key: %v", err)
 		}
-		pointVec = append(pointVec, util.Point{X: int64(key), Y: int64(i)})
+		pointVec = append(pointVec, util.Point{X: int(key), Y: i})
 	}
 
 	err = streamModelConstructor.FinalizeAppend()

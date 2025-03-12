@@ -37,14 +37,14 @@ import (
 
 const (
 	// 模型的大小，包括起始键、斜率、截距和最后一个索引
-	Model_SIZE = 8 + 8 + 8 + 4
+	Model_SIZE = 8 + 8 + 8 + 8
 )
 
 // Slope 表示斜率
 // 在PGM索引中，斜率用于表示线性模型中的斜率，以及在凸包构建过程中比较不同线段的斜率
 type Slope struct {
-	Dx int64 // X轴差值
-	Dy int64 // Y轴差值
+	Dx int // X轴差值
+	Dy int // Y轴差值
 }
 
 // Compare 比较两个斜率，返回:
@@ -66,8 +66,8 @@ func (s *Slope) Compare(other *Slope) int {
 // Point 表示一个点，由键和位置组成
 // 在PGM索引中，点表示(key, position)对，用于构建凸包和线性模型
 type Point struct {
-	X int64 // 键值
-	Y int64 // 位置
+	X int // 键值
+	Y int // 位置
 }
 
 // SubtractPoints 计算两点之间的斜率
@@ -82,7 +82,7 @@ func SubtractPoints(a, b *Point) Slope {
 // Cross 计算叉积
 // 叉积用于判断三点的相对位置关系，是凸包算法的核心操作
 // 如果叉积为正，表示三点形成的角是逆时针方向；如果为负，表示顺时针方向
-func Cross(o, a, b *Point) int64 {
+func Cross(o, a, b *Point) int {
 	oa := SubtractPoints(a, o)
 	ob := SubtractPoints(b, o)
 	return oa.Dx*ob.Dy - oa.Dy*ob.Dx
@@ -91,13 +91,13 @@ func Cross(o, a, b *Point) int64 {
 // OptimalPiecewiseLinearModel 原始PGM生成器
 // 这是PGM索引的核心组件，负责使用凸包算法构建最优的分段线性模型
 type OptimalPiecewiseLinearModel struct {
-	Epsilon      int64    // 允许的最大误差，控制模型的精度和大小
+	Epsilon      int   // 允许的最大误差，控制模型的精度和大小
 	Lower        []Point  // 下凸包，表示模型的下边界
 	Upper        []Point  // 上凸包，表示模型的上边界
-	FirstX       int64    // 第一个点的X坐标
-	FirstY       int64    // 第一个点的Y坐标
-	LastX        int64    // 最后一个点的X坐标
-	LastY        int64    // 最后一个点的Y坐标
+	FirstX       int    // 第一个点的X坐标
+	FirstY       int    // 第一个点的Y坐标
+	LastX        int    // 最后一个点的X坐标
+	LastY        int    // 最后一个点的Y坐标
 	LowerStart   int      // 下凸包的起始索引
 	UpperStart   int      // 上凸包的起始索引
 	PointsInHull int      // 凸包中的点数
@@ -106,7 +106,7 @@ type OptimalPiecewiseLinearModel struct {
 
 // NewOptimalPiecewiseLinearModel 创建一个新的PGM模型
 // epsilon参数控制模型的精度，较小的epsilon会产生更精确但更大的模型
-func NewOptimalPiecewiseLinearModel(epsilon int64) *OptimalPiecewiseLinearModel {
+func NewOptimalPiecewiseLinearModel(epsilon int) *OptimalPiecewiseLinearModel {
 	return &OptimalPiecewiseLinearModel{
 		Epsilon:      epsilon,
 		Lower:        make([]Point, 0),
@@ -125,7 +125,7 @@ func NewOptimalPiecewiseLinearModel(epsilon int64) *OptimalPiecewiseLinearModel 
 // AddPoint 添加一个点到模型中
 // 这是凸包算法的核心实现，尝试将新点添加到当前凸包中
 // 如果新点可以在当前误差范围内被容纳，返回true；否则返回false，表示需要创建新模型
-func (m *OptimalPiecewiseLinearModel) AddPoint(x, y int64) (bool, error) {
+func (m *OptimalPiecewiseLinearModel) AddPoint(x, y int) (bool, error) {
 	// 检查点是否递增，PGM索引要求键值是严格递增的
 	if m.PointsInHull > 0 && x <= m.LastX {
 		return false, ErrPointNotIncreasing
@@ -279,12 +279,12 @@ func (m *OptimalPiecewiseLinearModel) GetPointsInHull() int {
 // 表示从凸包中提取的线性模型
 type CanonicalSegment struct {
 	Rectangle [4]Point // 边界矩形，定义了线性模型的范围
-	LastY     int64    // 最后一个点的Y坐标
+	LastY     int    // 最后一个点的Y坐标
 }
 
 // NewCanonicalSegment 创建一个新的规范线段
 // 用于只有一个点的情况
-func NewCanonicalSegment(p0, p1 *Point, lastY int64) *CanonicalSegment {
+func NewCanonicalSegment(p0, p1 *Point, lastY int) *CanonicalSegment {
 	return &CanonicalSegment{
 		Rectangle: [4]Point{*p0, *p1, *p0, *p1},
 		LastY:     lastY,
@@ -293,7 +293,7 @@ func NewCanonicalSegment(p0, p1 *Point, lastY int64) *CanonicalSegment {
 
 // NewCanonicalSegmentLong 创建一个新的规范线段（长版本）
 // 用于有多个点的情况
-func NewCanonicalSegmentLong(rec *[4]Point, lastY int64) *CanonicalSegment {
+func NewCanonicalSegmentLong(rec *[4]Point, lastY int) *CanonicalSegment {
 	return &CanonicalSegment{
 		Rectangle: [4]Point{rec[0], rec[1], rec[2], rec[3]},
 		LastY:     lastY,
@@ -308,7 +308,7 @@ func (c *CanonicalSegment) OnePoint() bool {
 }
 
 // GetLastY 获取最后的Y值
-func (c *CanonicalSegment) GetLastY() int64 {
+func (c *CanonicalSegment) GetLastY() int {
 	return c.LastY
 }
 
@@ -378,7 +378,7 @@ type KeyModel struct {
 	Start     Key     // 该段的起始键
 	Slope     float64 // 线性模型的斜率
 	Intercept float64 // 线性模型的截距
-	LastIndex uint32  // 该段的最后一个位置
+	LastIndex int  // 该段的最后一个位置
 }
 
 // ModelGenerator 模型生成器
@@ -391,7 +391,7 @@ type ModelGenerator struct {
 
 // NewModelGenerator 创建一个新的模型生成器
 // epsilon参数控制模型的精度
-func NewModelGenerator(epsilon int64) *ModelGenerator {
+func NewModelGenerator(epsilon int) *ModelGenerator {
 	return &ModelGenerator{
 		Start:    0,
 		Pgm:      NewOptimalPiecewiseLinearModel(epsilon),
@@ -409,12 +409,12 @@ func (m *ModelGenerator) Append(key Key, pos int) bool {
 	}
 
 	// 处理相同键的情况
-	if key == Key(m.Pgm.LastX) && int64(pos) == m.Pgm.LastY {
+	if key == Key(m.Pgm.LastX) && pos == m.Pgm.LastY {
 		return true
 	}
 
 	// 尝试将点插入到凸包中
-	result, _ := m.Pgm.AddPoint(int64(key), int64(pos))
+	result, _ := m.Pgm.AddPoint(int(key), pos)
 	return result
 }
 
@@ -438,7 +438,7 @@ func (m *ModelGenerator) FinalizeModel() *KeyModel {
 		Start:     start,
 		Slope:     slope,
 		Intercept: intercept,
-		LastIndex: uint32(lastPos),
+		LastIndex: lastPos,
 	}
 }
 
@@ -466,7 +466,7 @@ func (k *KeyModel) GetStart() Key {
 
 // GetLastIndex 获取最后索引
 // 返回该模型段的最后一个位置
-func (k *KeyModel) GetLastIndex() uint32 {
+func (k *KeyModel) GetLastIndex() int {
 	return k.LastIndex
 }
 
@@ -492,7 +492,7 @@ func (k *KeyModel) ToBytes() []byte {
 	binary.BigEndian.PutUint64(totalBytes[0:8], uint64(k.Start))
 	binary.BigEndian.PutUint64(totalBytes[8:16], math.Float64bits(k.Slope))
 	binary.BigEndian.PutUint64(totalBytes[16:24], math.Float64bits(k.Intercept))
-	binary.BigEndian.PutUint32(totalBytes[24:28], k.LastIndex)
+	binary.BigEndian.PutUint64(totalBytes[24:32], uint64(k.LastIndex))
 
 	return totalBytes
 }
@@ -503,7 +503,7 @@ func KeyModelFromBytes(bytes []byte) *KeyModel {
 	start := Key(binary.BigEndian.Uint64(bytes[0:8]))
 	slope := math.Float64frombits(binary.BigEndian.Uint64(bytes[8:16]))
 	intercept := math.Float64frombits(binary.BigEndian.Uint64(bytes[16:24]))
-	lastIndex := binary.BigEndian.Uint32(bytes[24:28])
+	lastIndex := int(binary.BigEndian.Uint64(bytes[24:32]))
 
 	return &KeyModel{
 		Start:     start,

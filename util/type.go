@@ -1,6 +1,6 @@
 package util
 
-type Key int64
+type Key int
 type Value []byte
 type H256 [32]byte
 

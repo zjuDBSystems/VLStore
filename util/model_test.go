@@ -234,7 +234,7 @@ func BenchmarkFetchModelAndPredict(b *testing.B) {
 			Start:     Key(i * 100),
 			Slope:     0.1,
 			Intercept: float64(i * 10),
-			LastIndex: uint32(i*10 + 9),
+			LastIndex: i*10 + 9,
 		}
 	}
 
@@ -255,7 +255,7 @@ func BenchmarkFetchModelAndPredict(b *testing.B) {
 
 // 模拟CompoundKey的测试
 func TestCompoundKey(t *testing.T) {
-	epsilon := int64(23)
+	epsilon := 23
 	n := 100000
 
 	// 使用固定种子初始化随机数生成器
@@ -328,7 +328,7 @@ func TestCompoundKey(t *testing.T) {
 
 // 大规模PGM测试
 func TestPGM(t *testing.T) {
-	epsilon := int64(23)
+	epsilon := 23
 	n := 100000 // 减少测试规模，原始是100000
 
 	// 使用固定种子初始化随机数生成器

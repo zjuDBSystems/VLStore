@@ -15,7 +15,7 @@ const (
  */
 type ModelCollections struct {
 	V          []*util.KeyModel // vector of models
-	ModelLevel uint32
+	ModelLevel int
 }
 
 func NewModelCollections() *ModelCollections {
@@ -25,7 +25,7 @@ func NewModelCollections() *ModelCollections {
 	}
 }
 
-func NewModelCollectionsWithLevel(modelLevel uint32) *ModelCollections {
+func NewModelCollectionsWithLevel(modelLevel int) *ModelCollections {
 	return &ModelCollections{
 		V:          []*util.KeyModel{},
 		ModelLevel: modelLevel,
@@ -42,7 +42,7 @@ type ModelPageWriter struct {
 
 /* Initialize the writer using a given file_name
  */
-func CreateModelPageWriter(fileName string, modelLevel uint32) (*ModelPageWriter, error) {
+func CreateModelPageWriter(fileName string, modelLevel int) (*ModelPageWriter, error) {
 	file, err := os.OpenFile(fileName, os.O_CREATE|os.O_RDWR|os.O_TRUNC, 0666)
 	if err != nil {
 		return nil, err
@@ -194,7 +194,7 @@ func (m *ModelPageReader) ReadDeserPageAt(pageID int) (*ModelCollections, error)
 
 /* Query Models in the model file
  */
-func (m *ModelPageReader) GetPredStatePos(searchKey util.Key, epsilon int64) (int, error) {
+func (m *ModelPageReader) GetPredStatePos(searchKey util.Key, epsilon int) (int, error) {
 	/* First load the last page and find the model that covers the search key
 	 */
 	lastPageID := m.NumStoredPages - 1
@@ -213,7 +213,7 @@ func (m *ModelPageReader) GetPredStatePos(searchKey util.Key, epsilon int64) (in
 	} else {
 		// first search the model in the model_v and then determine the predicted page id range
 		predPos := util.FetchModelAndPredict(modelV, searchKey)
-		predPageIDLb := int(math.Max(0, float64((int64(predPos)-epsilon-1)/int64(MAX_NUM_MODEL_IN_PAGE))))
+		predPageIDLb := int(math.Max(0, float64((predPos-epsilon-1)/MAX_NUM_MODEL_IN_PAGE)))
 		predPageIDUb := int(math.Min(float64(lastPageID), float64((predPos+int(epsilon)+1)/MAX_NUM_MODEL_IN_PAGE)))
 
 		modelLevel--
@@ -223,7 +223,7 @@ func (m *ModelPageReader) GetPredStatePos(searchKey util.Key, epsilon int64) (in
 		}
 
 		for modelLevel != 0 {
-			predPageIDLb = int(math.Max(0, float64((int64(predPos)-epsilon-1)/int64(MAX_NUM_MODEL_IN_PAGE))))
+			predPageIDLb = int(math.Max(0, float64((predPos-epsilon-1)/MAX_NUM_MODEL_IN_PAGE)))
 			predPageIDUb = int(math.Min(float64(lastPageID), float64((predPos+int(epsilon)+1)/MAX_NUM_MODEL_IN_PAGE)))
 
 			modelLevel--
@@ -237,7 +237,7 @@ func (m *ModelPageReader) GetPredStatePos(searchKey util.Key, epsilon int64) (in
 	}
 }
 
-func (m *ModelPageReader) QueryModel(pageIDLb int, pageIDUb int, searchKey util.Key, modelLevel uint32) (int, error) {
+func (m *ModelPageReader) QueryModel(pageIDLb int, pageIDUb int, searchKey util.Key, modelLevel int) (int, error) {
 	modelV := []*util.KeyModel{}
 
 	for pageID := pageIDLb; pageID <= pageIDUb; pageID++ {
@@ -260,13 +260,13 @@ func (m *ModelPageReader) QueryModel(pageIDLb int, pageIDUb int, searchKey util.
 type StreamModelConstructor struct {
 	OutputModelWriter         *ModelPageWriter     // a writer of the output model file
 	LowestLevelModelGenerator *util.ModelGenerator // a model generator of the lowest level (learn input is the states)
-	Epsilon                   int64                // an upper-bound model prediction error
+	Epsilon                   int               // an upper-bound model prediction error
 	StatePos                  int                  // the position of the input state
 }
 
 /* Initiate the constructor with the output model file name and the upper error bound
  */
-func NewStreamModelConstructor(outputFileName string, epsilon int64) (*StreamModelConstructor, error) {
+func NewStreamModelConstructor(outputFileName string, epsilon int) (*StreamModelConstructor, error) {
 	// create the output model writer
 	outputModelWriter, err := CreateModelPageWriter(outputFileName, 0)
 	if err != nil {
@@ -333,7 +333,7 @@ func (s *StreamModelConstructor) FinalizeAppend() error {
 	outputModelWriter := s.OutputModelWriter
 	// n is the number of page in the previous model level
 	n := outputModelWriter.NumStoredPages
-	modelLevel := uint32(0)
+	modelLevel := 0
 
 	for n > 1 {
 		// n > 1 means we should build an upper level models since the top level models should be kept in a single page

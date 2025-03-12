@@ -305,28 +305,28 @@ func (r *ValuePageReader) ToValueIterator() *ValueIterator {
 }
 
 
-/* Iterator of value vector in memory
+/* Iterator of key-value vector in memory
  */
-type InMemValueIterator struct {
-	Values []util.Value // the values in memory
+type InMemKeyValueIterator struct {
+	KeyValues []util.KeyValue // the key-values in memory
 	CurValuePos int // the position of the current value
 }
 
-func NewInMemValueIterator(values []util.Value) *InMemValueIterator {
-	return &InMemValueIterator{
-		Values: values,
+func NewInMemKeyValueIterator(keyValues []util.KeyValue) *InMemKeyValueIterator {
+	return &InMemKeyValueIterator{
+		KeyValues: keyValues,
 		CurValuePos: 0,
 	}
 }
 
-func (it *InMemValueIterator) HasNext() bool {
-	return it.CurValuePos < len(it.Values)
+func (it *InMemKeyValueIterator) HasNext() bool {
+	return it.CurValuePos < len(it.KeyValues)
 }
 
-func (it *InMemValueIterator) Next() util.Value {
-	value := it.Values[it.CurValuePos]
+func (it *InMemKeyValueIterator) Next() util.KeyValue {
+	keyValue := it.KeyValues[it.CurValuePos]
 	it.CurValuePos++
-	return value
+	return keyValue
 }
 
 
