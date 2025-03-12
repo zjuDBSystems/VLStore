@@ -5,19 +5,20 @@ import (
 	"os"
 )
 
-/* A helper that writes the value into a file with a sequence of pages
-   According to the disk-optimization objective, the value writing should be in a streaming fashion.
- */
+/*
+A helper that writes the key-value pairs into a file with a sequence of pages
+According to the disk-optimization objective, the value writing should be in a streaming fashion.
+*/
 type ValuePageWriter struct {
-	File               *os.File // file object of the corresponding value file
-	ValuesInLatestUpdatePage []util.Value // a preparation vector to obsorb the streaming values which are not persisted in the file yet
-	SizeValuesInLatestUpdatePage int // the size of the values in the latest update page
-	NumStoredPages     int //records the number of pages that are stored in the file
-	NumValues          int //records the number of values
+	File                            *os.File        // file object of the corresponding value file
+	KeyValuesInLatestUpdatePage     []util.KeyValue // a preparation vector to obsorb the streaming key-values which are not persisted in the file yet
+	SizeKeyValuesInLatestUpdatePage int             // the size of the key-values in the latest update page
+	NumStoredPages                  int             //records the number of pages that are stored in the file
+	NumKeyValues                    int             //records the number of key-values
 }
 
- /* Initialize the writer using a given file name
-  */
+/* Initialize the writer using a given file name
+ */
 func NewValuePageWriter(fileName string) (*ValuePageWriter, error) {
 	file, err := os.OpenFile(fileName, os.O_CREATE|os.O_RDWR|os.O_TRUNC, 0666)
 	if err != nil {
@@ -25,17 +26,19 @@ func NewValuePageWriter(fileName string) (*ValuePageWriter, error) {
 	}
 
 	return &ValuePageWriter{
-		File:               file,
-		ValuesInLatestUpdatePage: make([]util.Value, 0),
-		SizeValuesInLatestUpdatePage: 0,
-		NumStoredPages:     0,
-		NumValues:          0,
+		File:                            file,
+		KeyValuesInLatestUpdatePage:     make([]util.KeyValue, 0),
+		SizeKeyValuesInLatestUpdatePage: 0,
+		NumStoredPages:                  0,
+		NumKeyValues:                    0,
 	}, nil
 }
 
-/* Load the writer from a given file
-    num_values and num_stored_pages are derived from the file
- */
+/*
+Load the writer from a given file
+
+	num_key_values and num_stored_pages are derived from the file
+*/
 func LoadValuePageWriter(fileName string) (*ValuePageWriter, error) {
 	file, err := os.OpenFile(fileName, os.O_CREATE|os.O_RDWR, 0666)
 	if err != nil {
@@ -48,9 +51,9 @@ func LoadValuePageWriter(fileName string) (*ValuePageWriter, error) {
 	}
 
 	numStoredPages := int(fileInfo.Size()) / PAGE_SIZE
-	valuesInLatestPage := make([]util.Value, 0)
-	numValues := 0
-	sizeValuesInLatestPage := 0
+	keyValuesInLatestPage := make([]util.KeyValue, 0)
+	numKeyValues := 0
+	sizeKeyValuesInLatestPage := 0
 	if numStoredPages > 0 {
 		lastPageOffset := int64((numStoredPages - 1) * PAGE_SIZE)
 
@@ -62,15 +65,15 @@ func LoadValuePageWriter(fileName string) (*ValuePageWriter, error) {
 		}
 
 		page := NewPageFromArray([PAGE_SIZE]byte(bytes))
-		pageValues := page.ToValueVector()
+		pageKeyValues := page.ToKeyValueVector()
 
-		// derive number of values in the last page
-		numValuesInLastPage := len(pageValues)
+		// derive number of key-values in the last page
+		numKeyValuesInLastPage := len(pageKeyValues)
 
-		// derive number of values 
-		var numValues int
+		// derive number of key-values
+		var numKeyValues int
 		if numStoredPages > 1 {
-			// read previous pages to calculate total number of values
+			// read previous pages to calculate total number of key-values
 			for i := 0; i < numStoredPages-1; i++ {
 				pageOffset := int64(i * PAGE_SIZE)
 				_, err = file.ReadAt(bytes, pageOffset)
@@ -79,61 +82,62 @@ func LoadValuePageWriter(fileName string) (*ValuePageWriter, error) {
 				}
 
 				currentPage := NewPageFromArray([PAGE_SIZE]byte(bytes))
-				numValues += len(currentPage.ToValueVector())
+				numKeyValues += len(currentPage.ToKeyValueVector())
 			}
 		}
-		numValues += numValuesInLastPage
+		numKeyValues += numKeyValuesInLastPage
 
-
-		sizeValuesInLatestPage += 4
-		for _, value := range pageValues {
-			sizeValuesInLatestPage += len(value) + 4
+		sizeKeyValuesInLatestPage += 4
+		for _, kv := range pageKeyValues {
+			sizeKeyValuesInLatestPage += len(kv.Value) + 12 // 8 bytes for key, 4 bytes for value length
 		}
 
-		if sizeValuesInLatestPage < PAGE_SIZE {
+		if sizeKeyValuesInLatestPage < PAGE_SIZE {
 			// the last page is not full, should not be finalized in the file
-			valuesInLatestPage = pageValues
+			keyValuesInLatestPage = pageKeyValues
 			numStoredPages--
 		}
-		
+
 	}
 
 	return &ValuePageWriter{
-		File:               file,
-		ValuesInLatestUpdatePage: valuesInLatestPage,
-		SizeValuesInLatestUpdatePage: sizeValuesInLatestPage,
-		NumStoredPages:     numStoredPages,
-		NumValues:          numValues,
+		File:                            file,
+		KeyValuesInLatestUpdatePage:     keyValuesInLatestPage,
+		SizeKeyValuesInLatestUpdatePage: sizeKeyValuesInLatestPage,
+		NumStoredPages:                  numStoredPages,
+		NumKeyValues:                    numKeyValues,
 	}, nil
 }
 
-/* Streamingly add the state to the latest_update_page
-   Flush the latest_update_page to the file once it is full, and clear it.
- */
-func (w *ValuePageWriter) Append(value util.Value) {
-	// check if adding this value will exceed the page size
-	sizeValuesInLatestPage := w.SizeValuesInLatestUpdatePage
-	if sizeValuesInLatestPage + len(value) + 4 > PAGE_SIZE {
-		// if adding this value will exceed the page size, flush the current page
+/*
+Streamingly add the key-value to the latest_update_page
+Flush the latest_update_page to the file once it is full, and clear it.
+*/
+func (w *ValuePageWriter) Append(key util.Key, value util.Value) {
+	// check if adding this key-value will exceed the page size
+	sizeKeyValuesInLatestPage := w.SizeKeyValuesInLatestUpdatePage
+	if sizeKeyValuesInLatestPage+len(value)+12 > PAGE_SIZE { // 8 bytes for key, 4 bytes for value length
+		// if adding this key-value will exceed the page size, flush the current page
 		w.Flush()
 	}
 
-	w.ValuesInLatestUpdatePage = append(w.ValuesInLatestUpdatePage, value)
-	w.SizeValuesInLatestUpdatePage += len(value) + 4
-	w.NumValues++
+	kv := util.KeyValue{Key: key, Value: value}
+	w.KeyValuesInLatestUpdatePage = append(w.KeyValuesInLatestUpdatePage, kv)
+	w.SizeKeyValuesInLatestUpdatePage += len(value) + 12 // 8 bytes for key, 4 bytes for value length
+	w.NumKeyValues++
 }
 
 /* Flush the vector in latest update page to the last page in the value file
  */
 func (w *ValuePageWriter) Flush() {
-	if len(w.ValuesInLatestUpdatePage) > 0 {
+	if len(w.KeyValuesInLatestUpdatePage) > 0 {
 		// check if the last update page is exceeding the page size
-		if w.SizeValuesInLatestUpdatePage > PAGE_SIZE {
+		if w.SizeKeyValuesInLatestUpdatePage > PAGE_SIZE {
 			panic("the size latest update page exceeds the page size")
 		}
 
-		// convert the value vector to a page
-		page := NewPageFromValueVector(w.ValuesInLatestUpdatePage)
+		// convert the key-value vector to a page
+		page := NewPageFromKeyValueVector(w.KeyValuesInLatestUpdatePage)
 
 		// compute the offset at which the page should be written in the file
 		offset := int64(w.NumStoredPages * PAGE_SIZE)
@@ -144,49 +148,53 @@ func (w *ValuePageWriter) Flush() {
 			panic(err)
 		}
 
-		// clear the value vector
-		w.ValuesInLatestUpdatePage = make([]util.Value, 0)
-		w.SizeValuesInLatestUpdatePage = 0
+		// clear the key-value vector
+		w.KeyValuesInLatestUpdatePage = make([]util.KeyValue, 0)
+		w.SizeKeyValuesInLatestUpdatePage = 0
 		w.NumStoredPages++
 	}
 }
 
- /* Transform pager writer to pager reader
-  */
+/* Transform pager writer to pager reader
+ */
 func (w *ValuePageWriter) ToValueReader() *ValuePageReader {
-	numValues := w.NumValues
+	numKeyValues := w.NumKeyValues
 	file := w.File
 
 	return &ValuePageReader{
-		File:      file,
-		NumValues: numValues,
+		File:         file,
+		NumKeyValues: numKeyValues,
 	}
 }
 
 /* Transform pager writer to iterator for preparing file merge
  */
-func (w *ValuePageWriter) ToValueIterator() *ValueIterator {
-	numValues := w.NumValues
+func (w *ValuePageWriter) ToKeyValueIterator() *KeyValueIterator {
+	numKeyValues := w.NumKeyValues
 
-	return &ValueIterator{
-		File:          w.File,
-		CurPageValues: make([]util.Value, 0),
-		CurValuePos:   0,
-		NumValues:     numValues,
+	return &KeyValueIterator{
+		File:             w.File,
+		CurPageKeyValues: make([]util.KeyValue, 0),
+		CurKeyValuePos:   0,
+		NumKeyValues:     numKeyValues,
 	}
 }
 
-/* A helper to read value from the file
-   A LRU cache is used to optimize the read performance.
- */
+/*
+A helper to read key-value from the file
+
+	A LRU cache is used to optimize the read performance.
+*/
 type ValuePageReader struct {
-	File      *os.File // file object of the corresponding value file
-	NumValues int // the number of values in the file
+	File         *os.File // file object of the corresponding value file
+	NumKeyValues int      // the number of key-values in the file
 }
 
-/* Load the reader from a given file. 
-   num_values and num_stored_pages are derived from the file
- */
+/*
+Load the reader from a given file.
+
+	num_key_values and num_stored_pages are derived from the file
+*/
 func LoadValuePageReader(fileName string) (*ValuePageReader, error) {
 	file, err := os.OpenFile(fileName, os.O_CREATE|os.O_RDWR, 0666)
 	if err != nil {
@@ -199,10 +207,10 @@ func LoadValuePageReader(fileName string) (*ValuePageReader, error) {
 	}
 
 	numStoredPages := int(fileInfo.Size()) / PAGE_SIZE
-	numValues := 0
+	numKeyValues := 0
 
 	if numStoredPages > 0 {
-		// read all pages to calculate the total number of values
+		// read all pages to calculate the total number of key-values
 		bytes := make([]byte, PAGE_SIZE)
 		for i := 0; i < numStoredPages; i++ {
 			pageOffset := int64(i * PAGE_SIZE)
@@ -212,20 +220,19 @@ func LoadValuePageReader(fileName string) (*ValuePageReader, error) {
 			}
 
 			page := NewPageFromArray([PAGE_SIZE]byte(bytes))
-			numValues += len(page.ToValueVector())
+			numKeyValues += len(page.ToKeyValueVector())
 		}
 	}
 
 	return &ValuePageReader{
-		File:      file,
-		NumValues: numValues,
+		File:         file,
+		NumKeyValues: numKeyValues,
 	}, nil
 }
 
 /* Load the deserialized vector of the page from the file at given page_id
  */
-func (r *ValuePageReader) ReadPageAt(pageID int) []util.Value {
-
+func (r *ValuePageReader) ReadPageAt(pageID int) []util.KeyValue {
 	// cache does not contain the page, should load the page from the file
 	offset := int64(pageID * PAGE_SIZE)
 	bytes := make([]byte, PAGE_SIZE)
@@ -235,38 +242,38 @@ func (r *ValuePageReader) ReadPageAt(pageID int) []util.Value {
 	}
 
 	page := NewPageFromArray([PAGE_SIZE]byte(bytes))
-	values := page.ToValueVector()
+	keyValues := page.ToKeyValueVector()
 
-	return values
+	return keyValues
 }
 
-/* Load the deserialized vector given the state's location range
+/* Load the deserialized vector given the key-value's location range
  */
-func (r *ValuePageReader) ReadValuesRange(posL, posR int) []util.Value {
-	if posL > posR || posL < 0 || posR > r.NumValues {
+func (r *ValuePageReader) ReadKeyValuesRange(posL, posR int) []util.KeyValue {
+	if posL > posR || posL < 0 || posR > r.NumKeyValues {
 		return nil
 	}
 
-	result := make([]util.Value, 0, posR-posL+1)
+	result := make([]util.KeyValue, 0, posR-posL+1)
 	currentPos := 0
 	currentPage := 0
 
 	// traverse the pages until finding the page containing posL
 	for {
-		values := r.ReadPageAt(currentPage)
-		if currentPos+len(values) > posL {
+		keyValues := r.ReadPageAt(currentPage)
+		if currentPos+len(keyValues) > posL {
 			break
 		}
-		currentPos += len(values)
+		currentPos += len(keyValues)
 		currentPage++
 	}
 
-	// collect all values in the range
+	// collect all key-values in the range
 	for currentPos <= posR {
-		values := r.ReadPageAt(currentPage)
-		for i := 0; i < len(values) && currentPos <= posR; i++ {
+		keyValues := r.ReadPageAt(currentPage)
+		for i := 0; i < len(keyValues) && currentPos <= posR; i++ {
 			if currentPos >= posL {
-				result = append(result, values[i])
+				result = append(result, keyValues[i])
 			}
 			currentPos++
 		}
@@ -293,28 +300,27 @@ func getFileSize(f *os.File) int64 {
 
 /* Transform pager reader to iterator for preparing file merge, destory the LRU reader instance after transformation
  */
-func (r *ValuePageReader) ToValueIterator() *ValueIterator {
-	numValues := r.NumValues
+func (r *ValuePageReader) ToKeyValueIterator() *KeyValueIterator {
+	numKeyValues := r.NumKeyValues
 
-	return &ValueIterator{
-		File:          r.File,
-		CurPageValues: make([]util.Value, 0),
-		CurValuePos:   0,
-		NumValues:     numValues,
+	return &KeyValueIterator{
+		File:             r.File,
+		CurPageKeyValues: make([]util.KeyValue, 0),
+		CurKeyValuePos:   0,
+		NumKeyValues:     numKeyValues,
 	}
 }
-
 
 /* Iterator of key-value vector in memory
  */
 type InMemKeyValueIterator struct {
-	KeyValues []util.KeyValue // the key-values in memory
-	CurValuePos int // the position of the current value
+	KeyValues   []util.KeyValue // the key-values in memory
+	CurValuePos int             // the position of the current value
 }
 
 func NewInMemKeyValueIterator(keyValues []util.KeyValue) *InMemKeyValueIterator {
 	return &InMemKeyValueIterator{
-		KeyValues: keyValues,
+		KeyValues:   keyValues,
 		CurValuePos: 0,
 	}
 }
@@ -329,48 +335,50 @@ func (it *InMemKeyValueIterator) Next() util.KeyValue {
 	return keyValue
 }
 
+/*
+Iterator of a key-value file
 
-
-/* Iterator of a value file
-   Use a cached vector of page to fetch the value one-by-one in a streaming fashion.
-   Note that the value should be read from the file in a 'Page' unit.
- */
-type ValueIterator struct {
-	File          *os.File
-	CurPageValues []util.Value
-	CurValuePos   int
-	NumValues     int
-	CurPage       int
-	PosInPage     int
+	Use a cached vector of page to fetch the key-value one-by-one in a streaming fashion.
+	Note that the key-value should be read from the file in a 'Page' unit.
+*/
+type KeyValueIterator struct {
+	File             *os.File
+	CurPageKeyValues []util.KeyValue
+	CurKeyValuePos   int
+	NumKeyValues     int
+	CurPage          int
+	PosInPage        int
 }
 
-/* Create a new state iterator by given the file handler and the number of states
+/* Create a new key-value iterator by given the file handler and the number of key-values
  */
-func CreateValueIteratorWithNumValues(file *os.File, numValues int) *ValueIterator {
-	return &ValueIterator{
-		File:          file,
-		CurPageValues: make([]util.Value, 0),
-		CurValuePos:   0,
-		NumValues:     numValues,
-		CurPage:       0,
-		PosInPage:     0,
+func CreateKeyValueIteratorWithNumKeyValues(file *os.File, numKeyValues int) *KeyValueIterator {
+	return &KeyValueIterator{
+		File:             file,
+		CurPageKeyValues: make([]util.KeyValue, 0),
+		CurKeyValuePos:   0,
+		NumKeyValues:     numKeyValues,
+		CurPage:          0,
+		PosInPage:        0,
 	}
 }
 
-/* Create a new state iterator by given the file handler.
-   The num_states is derived from the file (should load the last page to determine the number of states).
- */
-func CreateValueIterator(file *os.File) (*ValueIterator, error) {
+/*
+Create a new key-value iterator by given the file handler.
+
+	The num_key_values is derived from the file (should load the last page to determine the number of key-values).
+*/
+func CreateKeyValueIterator(file *os.File) (*KeyValueIterator, error) {
 	fileInfo, err := file.Stat()
 	if err != nil {
 		return nil, err
 	}
 
 	numStoredPages := int(fileInfo.Size()) / PAGE_SIZE
-	numValues := 0
+	numKeyValues := 0
 
 	if numStoredPages > 0 {
-		// read all pages to calculate the total number of values
+		// read all pages to calculate the total number of key-values
 		bytes := make([]byte, PAGE_SIZE)
 		for i := 0; i < numStoredPages; i++ {
 			pageOffset := int64(i * PAGE_SIZE)
@@ -380,35 +388,35 @@ func CreateValueIterator(file *os.File) (*ValueIterator, error) {
 			}
 
 			page := NewPageFromArray([PAGE_SIZE]byte(bytes))
-			numValues += len(page.ToValueVector())
+			numKeyValues += len(page.ToKeyValueVector())
 		}
 	}
 
-	return &ValueIterator{
-		File:          file,
-		CurPageValues: make([]util.Value, 0),
-		CurValuePos:   0,
-		NumValues:     numValues,
-		CurPage:       0,
-		PosInPage:     0,
+	return &KeyValueIterator{
+		File:             file,
+		CurPageKeyValues: make([]util.KeyValue, 0),
+		CurKeyValuePos:   0,
+		NumKeyValues:     numKeyValues,
+		CurPage:          0,
+		PosInPage:        0,
 	}, nil
 }
 
-/* Check if there is a next value
+/* Check if there is a next key-value
  */
-func (it *ValueIterator) HasNext() bool {
-	return it.CurValuePos < it.NumValues
+func (it *KeyValueIterator) HasNext() bool {
+	return it.CurKeyValuePos < it.NumKeyValues
 }
 
-/* Get the next value
+/* Get the next key-value
  */
-func (it *ValueIterator) Next() util.Value {
-	if it.CurValuePos >= it.NumValues {
-		return nil
+func (it *KeyValueIterator) Next() util.KeyValue {
+	if it.CurKeyValuePos >= it.NumKeyValues {
+		return util.KeyValue{}
 	}
 
 	// the current page has been traversed or the first call of Next()
-	if it.PosInPage >= len(it.CurPageValues) {
+	if it.PosInPage >= len(it.CurPageKeyValues) {
 		// should load a new page from the file
 		bytes := make([]byte, PAGE_SIZE)
 		offset := int64(it.CurPage * PAGE_SIZE)
@@ -419,17 +427,17 @@ func (it *ValueIterator) Next() util.Value {
 		}
 
 		page := NewPageFromArray([PAGE_SIZE]byte(bytes))
-		it.CurPageValues = page.ToValueVector()
+		it.CurPageKeyValues = page.ToKeyValueVector()
 		it.PosInPage = 0
 		it.CurPage++
 	}
 
-	// get the current value
-	value := it.CurPageValues[it.PosInPage]
+	// get the current key-value
+	keyValue := it.CurPageKeyValues[it.PosInPage]
 
 	// update the position
 	it.PosInPage++
-	it.CurValuePos++
+	it.CurKeyValuePos++
 
-	return value
+	return keyValue
 }

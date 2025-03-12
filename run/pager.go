@@ -99,6 +99,86 @@ func (p *Page) ToValueVector() []util.Value {
 }
 
 /*
+Write key-value vector to the page
+4 bytes num of key-value | (8 bytes key, 4 bytes value length, value bytes) for each key-value
+*/
+func NewPageFromKeyValueVector(keyValues []util.KeyValue) *Page {
+	// check the length of the vector is inside the maximum number in page
+	totalBytes := 4
+	for _, kv := range keyValues {
+		totalBytes += 8 + 4 + len(kv.Value) // 8 bytes for key, 4 bytes for value length, value bytes
+	}
+
+	if totalBytes > PAGE_SIZE {
+		panic("key-value vector size is larger than page size")
+	}
+
+	p := NewPage()
+
+	// write the number of key-value in the front of the page
+	numOfKeyValues := uint32(len(keyValues))
+	binary.BigEndian.PutUint32(p.Data[0:4], numOfKeyValues)
+
+	// iteratively write each key-value to the page
+	offset := 4
+	for _, kv := range keyValues {
+		// key (8 bytes)
+		binary.BigEndian.PutUint64(p.Data[offset:offset+8], uint64(kv.Key))
+		offset += 8
+
+		// value length
+		valueLen := uint32(len(kv.Value))
+		binary.BigEndian.PutUint32(p.Data[offset:offset+4], valueLen)
+		offset += 4
+
+		// value
+		copy(p.Data[offset:offset+int(valueLen)], kv.Value)
+		offset += int(valueLen)
+	}
+
+	return p
+}
+
+/*
+Read the key-values from a page
+*/
+func (p *Page) ToKeyValueVector() []util.KeyValue {
+	kv := make([]util.KeyValue, 0)
+
+	// deserialize the number of key-value in the page
+	numOfKeyValues := binary.BigEndian.Uint32(p.Data[0:4])
+
+	// deserialize each of the key-value from the page
+	offset := 4
+	for i := uint32(0); i < numOfKeyValues; i++ {
+		// read the key
+		if offset+8 > PAGE_SIZE {
+			panic("exceed page size")
+		}
+		key := util.Key(binary.BigEndian.Uint64(p.Data[offset : offset+8]))
+		offset += 8
+
+		// read the value length
+		if offset+4 > PAGE_SIZE {
+			panic("exceed page size")
+		}
+		valueLen := binary.BigEndian.Uint32(p.Data[offset : offset+4])
+		offset += 4
+
+		// read the value
+		if offset+int(valueLen) > PAGE_SIZE {
+			panic("exceed page size")
+		}
+		value := make(util.Value, valueLen)
+		copy(value, p.Data[offset:offset+int(valueLen)])
+		kv = append(kv, util.KeyValue{Key: key, Value: value})
+		offset += int(valueLen)
+	}
+
+	return kv
+}
+
+/*
 Write hash vector to the page
 4 bytes num of hash | hash_0, hash_1, ...
 */
@@ -147,7 +227,6 @@ func (p *Page) ToHashVector() []util.H256 {
 
 	return hashes
 }
-
 
 /*
 Write the model vector to the page

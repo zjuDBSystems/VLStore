@@ -34,7 +34,7 @@ func TestValuePager(t *testing.T) {
 		rng.Read(value)
 
 		valueVec = append(valueVec, value)
-		writer.Append(value)
+		writer.Append(util.Key(i), value)
 	}
 
 	// 确保所有数据都写入文件
@@ -53,15 +53,18 @@ func TestValuePager(t *testing.T) {
 
 		for i := 0; i < n; i++ {
 			// 找到包含当前值的页面
-			values := reader.ReadPageAt(currentPage)
-			for len(values) <= currentPos {
-				currentPos -= len(values)
+			keyValues := reader.ReadPageAt(currentPage)
+			for len(keyValues) <= currentPos {
+				currentPos -= len(keyValues)
 				currentPage++
-				values = reader.ReadPageAt(currentPage)
+				keyValues = reader.ReadPageAt(currentPage)
 			}
 
-			// 验证值
-			if !bytesEqual(values[currentPos], valueVec[i]) {
+			// 验证键和值
+			if keyValues[currentPos].Key != util.Key(i) {
+				t.Errorf("键不匹配: 位置 %d, 期望 %d, 得到 %d", i, i, keyValues[currentPos].Key)
+			}
+			if !bytesEqual(keyValues[currentPos].Value, valueVec[i]) {
 				t.Errorf("值不匹配: 位置 %d", i)
 			}
 
@@ -69,7 +72,7 @@ func TestValuePager(t *testing.T) {
 		}
 
 		elapsed := time.Since(start).Nanoseconds() / int64(n)
-		fmt.Printf("轮次 %d, 读取值时间: %d ns/值\n", j, elapsed)
+		fmt.Printf("轮次 %d, 读取键值对时间: %d ns/键值对\n", j, elapsed)
 	}
 
 	// 关闭读取器
@@ -81,12 +84,15 @@ func TestValuePager(t *testing.T) {
 		t.Fatalf("加载读取器失败: %v", err)
 	}
 
-	iterator := reader.ToValueIterator()
+	iterator := reader.ToKeyValueIterator()
 	count := 0
 
 	for iterator.HasNext() {
-		value := iterator.Next()
-		if !bytesEqual(value, valueVec[count]) {
+		keyValue := iterator.Next()
+		if keyValue.Key != util.Key(count) {
+			t.Errorf("迭代器键不匹配: 位置 %d, 期望 %d, 得到 %d", count, count, keyValue.Key)
+		}
+		if !bytesEqual(keyValue.Value, valueVec[count]) {
 			t.Errorf("迭代器值不匹配: 位置 %d", count)
 		}
 		count++
@@ -94,6 +100,21 @@ func TestValuePager(t *testing.T) {
 
 	if count != n {
 		t.Errorf("迭代器计数不匹配: 期望 %d, 得到 %d", n, count)
+	}
+
+	// 测试范围读取
+	keyValuesRange := reader.ReadKeyValuesRange(100, 200)
+	if len(keyValuesRange) != 101 {
+		t.Errorf("范围读取长度不匹配: 期望 %d, 得到 %d", 101, len(keyValuesRange))
+	}
+	for i := 0; i < len(keyValuesRange); i++ {
+		expectedKey := util.Key(i + 100)
+		if keyValuesRange[i].Key != expectedKey {
+			t.Errorf("范围读取键不匹配: 位置 %d, 期望 %d, 得到 %d", i, expectedKey, keyValuesRange[i].Key)
+		}
+		if !bytesEqual(keyValuesRange[i].Value, valueVec[i+100]) {
+			t.Errorf("范围读取值不匹配: 位置 %d", i)
+		}
 	}
 
 	// 清理测试文件
