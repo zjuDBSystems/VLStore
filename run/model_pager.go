@@ -286,7 +286,7 @@ func NewStreamModelConstructor(outputFileName string, epsilon int) (*StreamModel
 
 /* Streaminly append the key to the model generator for the lowest level
  */
-func (s *StreamModelConstructor) AppendStateKey(key util.Key) error {
+func (s *StreamModelConstructor) AppendKey(key util.Key) error {
 	pos := s.StatePos
 	r := s.LowestLevelModelGenerator.Append(key, pos)
 	if !r {

@@ -5,14 +5,14 @@ import (
 )
 
 type Configs struct {
-	Fanout        uint32 // fanout of the MHT
-	Epsilon       int64  // upper error bound of the piecewise model
+	Fanout        int // fanout of the MHT
+	Epsilon       int  // upper error bound of the piecewise model
 	DirName       string // directory name of the storage
-	BaseStateNum  uint32 // number of states in the in-memory level
-	SizeRatio     uint32 // ratio of the number of states in between the two consecutive levels
+	BaseStateNum  int // number of states in the in-memory level
+	SizeRatio     int // ratio of the number of states in between the two consecutive levels
 }
 
-func NewConfigs(fanout uint32, epsilon int64, dirName string, baseStateNum uint32, sizeRatio uint32) *Configs {
+func NewConfigs(fanout int, epsilon int, dirName string, baseStateNum int, sizeRatio int) *Configs {
 	return &Configs{
 		Fanout:        fanout,
 		Epsilon:       epsilon,
@@ -22,8 +22,8 @@ func NewConfigs(fanout uint32, epsilon int64, dirName string, baseStateNum uint3
 	}
 }
 
-func (c *Configs) MaxNumOfStatesInARun(levelId uint32) uint32 {
-	return c.BaseStateNum * uint32(math.Pow(float64(c.SizeRatio), float64(levelId)))
+func (c *Configs) MaxNumOfStatesInARun(levelId int) int {
+	return c.BaseStateNum * int(math.Pow(float64(c.SizeRatio), float64(levelId)))
 }
 
 
@@ -32,7 +32,7 @@ Compute a recommended bitmap size for items_count items
 and a fp_p rate of false positives.
 fp_p obviously has to be within the [0.0, 1.0] range.
  */
-func ComputeBitmapSizeInBytes(itemsCount uint32, fpP float64) uint32 {
+func ComputeBitmapSizeInBytes(itemsCount int, fpP float64) int {
 	if itemsCount <= 0 || fpP <= 0.0 || fpP >= 1.0 {
 		panic("invalid input")
 	}
@@ -44,5 +44,5 @@ func ComputeBitmapSizeInBytes(itemsCount uint32, fpP float64) uint32 {
 	totalBits := numSlices * sliceLenBits
 	// round up to the next byte
 	bufferBytes := (totalBits + 7) / 8
-	return uint32(bufferBytes)
+	return int(bufferBytes)
 }

@@ -37,7 +37,7 @@ import (
 
 const (
 	// 模型的大小，包括起始键、斜率、截距和最后一个索引
-	Model_SIZE = 8 + 8 + 8 + 8
+	Model_SIZE = 8 + 8 + 8 + 4
 )
 
 // Slope 表示斜率
@@ -91,13 +91,13 @@ func Cross(o, a, b *Point) int {
 // OptimalPiecewiseLinearModel 原始PGM生成器
 // 这是PGM索引的核心组件，负责使用凸包算法构建最优的分段线性模型
 type OptimalPiecewiseLinearModel struct {
-	Epsilon      int   // 允许的最大误差，控制模型的精度和大小
+	Epsilon      int      // 允许的最大误差，控制模型的精度和大小
 	Lower        []Point  // 下凸包，表示模型的下边界
 	Upper        []Point  // 上凸包，表示模型的上边界
-	FirstX       int    // 第一个点的X坐标
-	FirstY       int    // 第一个点的Y坐标
-	LastX        int    // 最后一个点的X坐标
-	LastY        int    // 最后一个点的Y坐标
+	FirstX       int      // 第一个点的X坐标
+	FirstY       int      // 第一个点的Y坐标
+	LastX        int      // 最后一个点的X坐标
+	LastY        int      // 最后一个点的Y坐标
 	LowerStart   int      // 下凸包的起始索引
 	UpperStart   int      // 上凸包的起始索引
 	PointsInHull int      // 凸包中的点数
@@ -279,7 +279,7 @@ func (m *OptimalPiecewiseLinearModel) GetPointsInHull() int {
 // 表示从凸包中提取的线性模型
 type CanonicalSegment struct {
 	Rectangle [4]Point // 边界矩形，定义了线性模型的范围
-	LastY     int    // 最后一个点的Y坐标
+	LastY     int      // 最后一个点的Y坐标
 }
 
 // NewCanonicalSegment 创建一个新的规范线段
@@ -378,7 +378,7 @@ type KeyModel struct {
 	Start     Key     // 该段的起始键
 	Slope     float64 // 线性模型的斜率
 	Intercept float64 // 线性模型的截距
-	LastIndex int  // 该段的最后一个位置
+	LastIndex int     // 该段的最后一个位置
 }
 
 // ModelGenerator 模型生成器
@@ -449,8 +449,8 @@ func (m *ModelGenerator) IsHullEmpty() bool {
 }
 
 // MODEL_SIZE 模型的字节大小
-// Key(8) + slope(8) + intercept(8) + lastIndex(4) = 28字节
-const MODEL_SIZE = 8 + 8 + 8 + 4
+// Key(8) + slope(8) + intercept(8) + lastIndex(8) = 32字节
+const MODEL_SIZE = 8 + 8 + 8 + 8
 
 // GetSlopeIntercept 获取斜率和截距
 // 返回线性模型的斜率和截距
@@ -492,7 +492,7 @@ func (k *KeyModel) ToBytes() []byte {
 	binary.BigEndian.PutUint64(totalBytes[0:8], uint64(k.Start))
 	binary.BigEndian.PutUint64(totalBytes[8:16], math.Float64bits(k.Slope))
 	binary.BigEndian.PutUint64(totalBytes[16:24], math.Float64bits(k.Intercept))
-	binary.BigEndian.PutUint64(totalBytes[24:32], uint64(k.LastIndex))
+	binary.BigEndian.PutUint32(totalBytes[24:28], uint32(k.LastIndex))
 
 	return totalBytes
 }
@@ -503,7 +503,7 @@ func KeyModelFromBytes(bytes []byte) *KeyModel {
 	start := Key(binary.BigEndian.Uint64(bytes[0:8]))
 	slope := math.Float64frombits(binary.BigEndian.Uint64(bytes[8:16]))
 	intercept := math.Float64frombits(binary.BigEndian.Uint64(bytes[16:24]))
-	lastIndex := int(binary.BigEndian.Uint64(bytes[24:32]))
+	lastIndex := int(binary.BigEndian.Uint32(bytes[24:28]))
 
 	return &KeyModel{
 		Start:     start,

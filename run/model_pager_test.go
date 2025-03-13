@@ -4,6 +4,7 @@ import (
 	"VLStore/util"
 	"fmt"
 	"math/rand"
+	"os"
 	"sort"
 	"testing"
 	"time"
@@ -11,10 +12,13 @@ import (
 
 func TestModelPager(t *testing.T) {
 	n := 10000
-	writer, err := CreateModelPageWriter("model.dat", 0)
+	fileName := "model.dat"
+	writer, err := CreateModelPageWriter(fileName, 0)
 	if err != nil {
 		t.Fatalf("Failed to create model page writer: %v", err)
 	}
+	// 测试结束后删除文件
+	defer os.Remove(fileName)
 
 	modelVec := make([]*util.KeyModel, 0, n)
 	for i := 0; i < n; i++ {
@@ -69,6 +73,9 @@ func TestStreamingModel(t *testing.T) {
 	//r := rand.New(rand.NewSource(1))
 	epsilon := 46
 	n := 10000 // 减少数量以加快测试速度
+	fileName := "model.dat"
+	// 测试结束后删除文件
+	defer os.Remove(fileName)
 
 	keys := make([]util.Key, 0, n)
 	for i := 0; i < n; i++ {
@@ -84,7 +91,7 @@ func TestStreamingModel(t *testing.T) {
 	})
 
 	start := time.Now()
-	streamModelConstructor, err := NewStreamModelConstructor("model.dat", epsilon)
+	streamModelConstructor, err := NewStreamModelConstructor(fileName, epsilon)
 	if err != nil {
 		t.Fatalf("Failed to create stream model constructor: %v", err)
 	}
@@ -92,7 +99,7 @@ func TestStreamingModel(t *testing.T) {
 	pointVec := make([]util.Point, 0, n)
 
 	for i, key := range keys {
-		err := streamModelConstructor.AppendStateKey(key)
+		err := streamModelConstructor.AppendKey(key)
 		if err != nil {
 			t.Fatalf("Failed to append state key: %v", err)
 		}
