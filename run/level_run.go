@@ -29,7 +29,7 @@ type LevelRun struct {
 // Load 根据运行ID、层级ID和配置加载一个运行
 func Load(runID int, levelID int, configs *util.Configs) (*LevelRun, error) {
 	// 定义值、模型、MHT和过滤器的文件名
-	valueFileName := FileName(runID, levelID, configs.DirName, "s")
+	valueFileName := FileName(runID, levelID, configs.DirName, "v")
 	modelFileName := FileName(runID, levelID, configs.DirName, "m")
 	mhtFileName := FileName(runID, levelID, configs.DirName, "h")
 	filterFileName := FileName(runID, levelID, configs.DirName, "f")
@@ -103,7 +103,7 @@ func Load(runID int, levelID int, configs *util.Configs) (*LevelRun, error) {
 
 // ConstructRunByInMemoryTree 使用内存迭代器构建运行
 func ConstructRunByInMemoryTree(inputs *InMemKeyValueIterator, runID int, levelID int, dirName string, epsilon int, fanout int, maxNumOfValue int, levelNumOfRun int, sizeRatio int) (*LevelRun, error) {
-	valueFileName := FileName(runID, levelID, dirName, "s")
+	valueFileName := FileName(runID, levelID, dirName, "v")
 	modelFileName := FileName(runID, levelID, dirName, "m")
 	mhtFileName := FileName(runID, levelID, dirName, "h")
 
