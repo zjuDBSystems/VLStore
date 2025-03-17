@@ -15,6 +15,10 @@ type MBTree struct {
 	hasher util.Hasher
 }
 
+func (t *MBTree) KeyNum() int {
+	return t.keyNum
+}
+
 func NewBPlusTree(fanout int) *MBTree {
 	return &MBTree{
 		root:   nil,
@@ -30,6 +34,14 @@ func NewBPlusTree(fanout int) *MBTree {
 func (t *MBTree) LoadAllKeyValues() []util.KeyValue {
 	result := make([]util.KeyValue, 0)
 
+	// 如果根节点为空，只返回临时节点中的键值对
+	if t.root == nil {
+		if t.tmp != nil {
+			result = append(result, t.tmp.KeyValues...)
+		}
+		return result
+	}
+
 	// 找到最左边的叶子节点
 	current := t.root
 	for !current.IsLeaf() {
@@ -38,8 +50,12 @@ func (t *MBTree) LoadAllKeyValues() []util.KeyValue {
 
 	// 遍历叶子节点
 	for current != nil {
-		result = append(result, current.(*leafNode).KeyValues...)
-		current = current.(*leafNode).Next
+		currentLeaf := current.(*leafNode)
+		if currentLeaf == nil {
+			break
+		}
+		result = append(result, currentLeaf.KeyValues...)
+		current = currentLeaf.Next
 	}
 
 	// 获取临时节点中的键值对

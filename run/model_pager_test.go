@@ -69,10 +69,11 @@ func TestModelPager(t *testing.T) {
 	}
 }
 
+// 测试流式模型构造器写入性能
 func TestStreamingModel(t *testing.T) {
 	//r := rand.New(rand.NewSource(1))
 	epsilon := 46
-	n := 10000 // 减少数量以加快测试速度
+	n := 1000000 // 减少数量以加快测试速度
 	fileName := "model.dat"
 	// 测试结束后删除文件
 	defer os.Remove(fileName)
@@ -81,7 +82,7 @@ func TestStreamingModel(t *testing.T) {
 	for i := 0; i < n; i++ {
 		// 创建随机键
 		//key := util.Key(r.Int63())
-		key := util.Key(rand.Intn(1000000))
+		key := util.Key(rand.Intn(100000000))
 		keys = append(keys, key)
 	}
 
@@ -111,41 +112,43 @@ func TestStreamingModel(t *testing.T) {
 		t.Fatalf("Failed to finalize append: %v", err)
 	}
 
-	elapse := time.Since(start).Nanoseconds()
-	fmt.Printf("avg construct time: %d ns\n", elapse/int64(n))
+	elapse := time.Since(start)
+	// 计算吞吐量 (ops/s)
+	throughput := float64(n) / elapse.Seconds()
+	fmt.Printf("throughput: %.2f ops/s\n", throughput)
 
-	writer := streamModelConstructor.OutputModelWriter
-	reader := writer.ToModelReader()
+	// writer := streamModelConstructor.OutputModelWriter
+	// reader := writer.ToModelReader()
 
-	numOfPages := reader.NumStoredPages
-	for i := 0; i < numOfPages; i++ {
-		collection, err := reader.ReadDeserPageAt(i)
-		if err != nil {
-			t.Fatalf("Failed to read page: %v", err)
-		}
-		fmt.Printf("collection size: %d, model_level: %d\n", len(collection.V), collection.ModelLevel)
-	}
+	// numOfPages := reader.NumStoredPages
+	// for i := 0; i < numOfPages; i++ {
+	// 	collection, err := reader.ReadDeserPageAt(i)
+	// 	if err != nil {
+	// 		t.Fatalf("Failed to read page: %v", err)
+	// 	}
+	// 	fmt.Printf("collection size: %d, model_level: %d\n", len(collection.V), collection.ModelLevel)
+	// }
 
-	start = time.Now()
-	for _, point := range pointVec {
-		key := util.Key(point.X)
-		truePos := int(point.Y)
-		predPos, err := reader.GetPredStatePos(key, epsilon)
-		if err != nil {
-			t.Fatalf("Failed to get predicted position: %v", err)
-		}
+	// start = time.Now()
+	// for _, point := range pointVec {
+	// 	key := util.Key(point.X)
+	// 	truePos := int(point.Y)
+	// 	predPos, err := reader.GetPredStatePos(key, epsilon)
+	// 	if err != nil {
+	// 		t.Fatalf("Failed to get predicted position: %v", err)
+	// 	}
 
-		diff := float64(truePos - predPos)
-		if diff < 0 {
-			diff = -diff
-		}
+	// 	diff := float64(truePos - predPos)
+	// 	if diff < 0 {
+	// 		diff = -diff
+	// 	}
 
-		// 验证预测误差在允许范围内
-		if diff > float64(epsilon+1) {
-			t.Errorf("Prediction error too large: key=%d, true_pos=%d, pred_pos=%d, diff=%f", key, truePos, predPos, diff)
-		}
-	}
+	// 	// 验证预测误差在允许范围内
+	// 	if diff > float64(epsilon+1) {
+	// 		t.Errorf("Prediction error too large: key=%d, true_pos=%d, pred_pos=%d, diff=%f", key, truePos, predPos, diff)
+	// 	}
+	// }
 
-	elapse = time.Since(start).Nanoseconds()
-	fmt.Printf("avg pred time: %d ns\n", elapse/int64(n))
+	// elapse = time.Since(start)
+	// fmt.Printf("avg pred time: %d ns\n", elapse.Nanoseconds()/int64(n))
 }

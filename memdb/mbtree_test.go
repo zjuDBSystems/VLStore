@@ -48,7 +48,7 @@ func TestSequentialInsert(t *testing.T) {
 func TestInsertThroughput(t *testing.T) {
 	const (
 		fanout     = 4      // 根据实际场景调整
-		numInserts = 100000 // 测试数据量
+		numInserts = 1000000 // 测试数据量
 		sampleSize = 1000   // 抽样验证数量
 	)
 
