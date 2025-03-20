@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"sort"
 
 	"github.com/bits-and-blooms/bloom/v3"
 )
@@ -88,8 +89,8 @@ func Load(runID int, levelID int, configs *util.Configs) (*LevelRun, error) {
 	}
 
 	// 计算摘要
-	digest := LoadDigest(mhtRoot, filterHash)
-
+	//digest := LoadDigest(mhtRoot, filterHash)
+	digest := mhtRoot
 	return &LevelRun{
 		RunID:       runID,
 		ValueReader: valueReader,
@@ -137,9 +138,11 @@ func ConstructRunByInMemoryTree(inputs *InMemKeyValueIterator, runID int, levelI
 		// add the KV's key to the model constructor
 		modelConstructor.AppendKey(keyValue.Key)
 		// insert the KV's key to the filter
-		keyBytes := make([]byte, 8)
-		binary.LittleEndian.PutUint64(keyBytes, uint64(keyValue.Key))
-		filter.Add(keyBytes)
+		if filter != nil {
+			keyBytes := make([]byte, 8)
+			binary.LittleEndian.PutUint64(keyBytes, uint64(keyValue.Key))
+			filter.Add(keyBytes)
+		}
 		// add the KV's hash to the mht constructor
 		mhtConstructor.Append(keyValue.ComputeHash(util.NewHasher(util.BLAKE3)))
 		// add the KV's value to the value writer
@@ -160,7 +163,7 @@ func ConstructRunByInMemoryTree(inputs *InMemKeyValueIterator, runID int, levelI
 	// 获取MHT根哈希
 	mhtRoot := mhtReader.Root
 
-	// 计算过滤器哈希（如果存在）
+	//计算过滤器哈希（如果存在）
 	var filterHash *util.H256 = nil
 	if filter != nil {
 		filterData, err := filter.MarshalBinary()
@@ -171,8 +174,8 @@ func ConstructRunByInMemoryTree(inputs *InMemKeyValueIterator, runID int, levelI
 		filterHash = &hash
 	}
 
-	// 计算摘要
-	digest := LoadDigest(mhtRoot, filterHash)
+	// 计算摘要(暂时不计算过滤器哈希)
+	digest := mhtRoot
 
 	return &LevelRun{
 		RunID:       runID,
@@ -284,17 +287,17 @@ func EstimateAllFilterSize(levelID int, maxNumOfValue int, levelNumOfRun int, si
 }
 
 // ComputeDigest 计算LevelRun的摘要
-func (lr *LevelRun) ComputeDigest() util.H256 {
-	mhtRoot := lr.MHTReader.Root
-	var bytes []byte
-	bytes = append(bytes, mhtRoot[:]...)
+// func (lr *LevelRun) ComputeDigest() util.H256 {
+// 	mhtRoot := lr.MHTReader.Root
+// 	var bytes []byte
+// 	bytes = append(bytes, mhtRoot[:]...)
 
-	if lr.FilterHash != nil {
-		bytes = append(bytes, (*lr.FilterHash)[:]...)
-	}
+// 	if lr.FilterHash != nil {
+// 		bytes = append(bytes, (*lr.FilterHash)[:]...)
+// 	}
 
-	return util.NewHasher(util.BLAKE3).HashBytes(bytes)
-}
+// 	return util.NewHasher(util.BLAKE3).HashBytes(bytes)
+// }
 
 // FileName 生成不同文件类型的文件名
 func FileName(runID int, levelID int, dirName string, fileType string) string {
@@ -302,15 +305,30 @@ func FileName(runID int, levelID int, dirName string, fileType string) string {
 }
 
 // LoadDigest 根据MHT根和过滤器（如果存在）计算运行的摘要
-func LoadDigest(mhtRoot util.H256, filterHash *util.H256) util.H256 {
-	var bytes []byte
-	bytes = append(bytes, mhtRoot[:]...)
+// func LoadDigest(mhtRoot util.H256, filterHash *util.H256) util.H256 {
+// 	var bytes []byte
+// 	bytes = append(bytes, mhtRoot[:]...)
 
-	if filterHash != nil {
-		bytes = append(bytes, (*filterHash)[:]...)
+// 	if filterHash != nil {
+// 		bytes = append(bytes, (*filterHash)[:]...)
+// 	}
+
+// 	return util.NewHasher(util.BLAKE3).HashBytes(bytes)
+// }
+
+// LoadKeyValues 加载LevelRun中的所有键值对
+func (lr *LevelRun) LoadKeyValues() []util.KeyValue {
+	fileInfo, err := lr.ValueReader.File.Stat()
+	if err != nil {
+		panic(err)
 	}
-
-	return util.NewHasher(util.BLAKE3).HashBytes(bytes)
+	valuePageNum := int(fileInfo.Size() / PAGE_SIZE)
+	result := make([]util.KeyValue, 0)
+	for pageID := 0; pageID < valuePageNum; pageID++ {
+		pageKeyValues := lr.ValueReader.ReadPageAt(pageID)
+		result = append(result, pageKeyValues...)
+	}
+	return result
 }
 
 // FilterCost 返回过滤器的大小信息
@@ -324,4 +342,149 @@ func (lr *LevelRun) FilterCost() int {
 	}
 
 	return filterSize
+}
+
+type RunProof struct {
+	rangeProof *RangeProof
+}
+
+func NewRunProof() *RunProof {
+	return &RunProof{
+		rangeProof: nil,
+	}
+}
+
+func (lr *LevelRun) ProveLeaf(l, r, numOfData, fanout int, proof *RangeProof) {
+	levelL := l
+	levelR := r
+	proofPosL := levelL - levelL%fanout
+	proofPosR := levelR - levelR%fanout + fanout
+	if proofPosR > numOfData {
+		proofPosR = numOfData
+	}
+	proofPosR--
+
+	// Read key-values from value reader
+	keyValues := lr.ValueReader.ReadKeyValuesRange(proofPosL, proofPosR)
+
+	// Create leaf hashes
+	leafHashes := make([]util.H256, 0, len(keyValues))
+	for _, kv := range keyValues {
+		leafHashes = append(leafHashes, kv.ComputeHash(util.NewHasher(util.BLAKE3)))
+	}
+	
+	// Remove the hashes that are in the proven range
+	for i := 0; i < (levelR - levelL + 1); i++ {
+		leafHashes = append(leafHashes[:levelL-proofPosL], leafHashes[levelL-proofPosL+1:]...)
+	}
+
+	// Insert at the beginning of the proof path
+	proof.p = append([][]util.H256{leafHashes}, proof.p...)
+}
+
+/*
+Generate the result and the RunProof
+If the filter does show that the addr_key does not exist, use the filter + MHT root as the proof.
+If the filter cannot show, use the MHT to prove the result, add the filter's hash to the proof.
+*/
+
+func (lr *LevelRun) proveRange(startKey, endKey util.Key, configs *util.Configs) ([]util.KeyValue, *RunProof) {
+	// init the proof
+	proof := NewRunProof()
+
+	epsilon := configs.Epsilon
+
+	// Use model file to predict positions
+	predPosLow, err := lr.ModelReader.GetPredStatePos(startKey, epsilon)
+	if err != nil {
+		panic(err)
+	}
+	predPosUpper, err := lr.ModelReader.GetPredStatePos(endKey, epsilon)
+	if err != nil {
+		panic(err)
+	}
+
+	numOfValues := lr.ValueReader.NumKeyValues
+
+	// Compute position boundaries based on predictions and epsilon
+	posL := int(math.Min(math.Max(float64(predPosLow-epsilon-1), 0), float64(numOfValues-1)))
+	posR := int(math.Min(float64(predPosUpper+epsilon+3), float64(numOfValues-1)))
+
+	// Load key-values from the range
+	keyValues := lr.ValueReader.ReadKeyValuesRange(posL, posR)
+
+	// Binary search to find exact positions in the retrieved data
+	lowerIndex := sort.Search(len(keyValues), func(i int) bool {
+		return keyValues[i].Key >= startKey
+	})
+	upperIndex := sort.Search(len(keyValues), func(i int) bool {
+		return keyValues[i].Key >= endKey
+	})
+
+	var leftProofPos int = -1
+	var rightProofPos int = -1
+
+    if lowerIndex == len(keyValues) || upperIndex == len(keyValues) {
+		if lowerIndex == len(keyValues) {
+			leftProofPos = numOfValues-1
+		}
+		if upperIndex == len(keyValues) {
+			rightProofPos = numOfValues-1
+		}
+	}else{
+		// Derive the actual position by adding offset pos_l
+		leftProofPos = lowerIndex + posL
+		rightProofPos = upperIndex + posL
+
+		// Adjust boundary positions
+		if leftProofPos != 0 && keyValues[lowerIndex].Key == startKey {
+			leftProofPos--
+		}
+		if rightProofPos != numOfValues-1 {
+			rightProofPos++
+		}
+	}
+
+
+	// Get the result key-value pairs
+	resultData := keyValues[leftProofPos-posL : rightProofPos-posL+1]
+
+	// Generate non-leaf range proof
+	fanout := configs.Fanout
+	rangeProof := lr.MHTReader.proveNonLeaf(leftProofPos, rightProofPos, numOfValues, fanout)
+
+	// Generate leaf range proof
+	lr.ProveLeaf(leftProofPos, rightProofPos, numOfValues, fanout, rangeProof)
+
+	proof.rangeProof = rangeProof
+
+	return resultData, proof
+}
+
+// VerifyRunProof verifies a run proof against a known root hash
+func VerifyRunProof(startKey, endKey util.Key, results []util.KeyValue, proof *RunProof, fanout int, rootHash util.H256) bool {
+	for i, result := range results {
+		if i == 0 {
+			if result.Key >= startKey {
+				return false
+			}
+		}else if i == len(results)-1 {
+			if result.Key <= endKey {
+				return false
+			}
+		}else{
+			if result.Key < startKey || result.Key > endKey {
+				return false
+			}
+		}
+	}
+	rangeProof := proof.rangeProof
+	resultsHashes := make([]util.H256, len(results))
+	for i, result := range results {
+		resultsHashes[i] = result.ComputeHash(util.NewHasher(util.BLAKE3))
+	}
+
+	
+	reconstructMerkleRoot := ReconstructRangeProof(rangeProof, fanout, resultsHashes, util.NewHasher(util.BLAKE3))
+	return reconstructMerkleRoot == rootHash
 }

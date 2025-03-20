@@ -162,8 +162,8 @@ func TestVLStoreInMemoryOnly(t *testing.T) {
 	}
 
 	// 验证内存树中的键值对数量
-	if store.MemDB.KeyNum() != numEntries {
-		t.Errorf("内存树中的键值对数量不匹配, 期望: %d, 实际: %d", numEntries, store.MemDB.KeyNum())
+	if store.MemTable.KeyNum() != numEntries {
+		t.Errorf("内存树中的键值对数量不匹配, 期望: %d, 实际: %d", numEntries, store.MemTable.KeyNum())
 	}
 }
 
@@ -222,8 +222,8 @@ func TestVLStoreInitialization(t *testing.T) {
 			}
 
 			// 验证内存树是否正确初始化
-			if store.MemDB == nil {
-				t.Error("MemDB未初始化")
+			if store.MemTable == nil {
+				t.Error("MemTable未初始化")
 			}
 
 			// 验证LevelVec是否正确初始化
@@ -274,7 +274,7 @@ func TestVLStoreWriteThroughput(t *testing.T) {
 		//{"中数据量", 4, 23, 1000, 2, 10000},
 		//{"中数据量", 4, 23, 1000, 2, 10000},
 		//{"大数据量", 4, 23, 1000, 2, 50000},
-		{"大数据量", 4, 4, 64000, 2, 1000000},
+		{"大数据量", 4, 23, 64000, 2, 1000000},
 		//{"高扇出", 8, 23, 1000, 2, 50000},
 		//{"低扇出", 2, 23, 1000, 2, 50000},
 	}

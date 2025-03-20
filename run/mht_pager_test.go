@@ -6,6 +6,7 @@ import (
 	"os"
 	"testing"
 	"time"
+	"math/rand"
 )
 
 func TestHashPager(t *testing.T) {
@@ -70,7 +71,7 @@ func TestHashPager(t *testing.T) {
 
 
 func TestConstructMHT(t *testing.T) {
-	n := 1000
+	n := 100000
 	fanout := 16
 
 	start := time.Now()
@@ -111,29 +112,31 @@ func TestConstructMHT(t *testing.T) {
 	// 验证
 	cnt := 0
 	verifyStart := time.Now()
-
-	for i := 0; i < n; i++ {
-		for j := i; j < n; j++ {
+	m := 10
+	r := rand.New(rand.NewSource(1))
+	for k := 0; k < m; k++ {
+		// i为0到n-51之间的随机数
+		i := r.Intn(n-50)
+		j := i + 50
+		// 获取非叶子证明
+		proof := reader.proveNonLeaf(i, j, n, fanout)
 			
-			// 获取非叶子证明
-			proof := reader.proveNonLeaf(i, j, n, fanout)
-			
-			// 获取叶子证明
-			proveLeaf(i, j, n, fanout, proof, leafHashCollection)
+		// 获取叶子证明
+		proveLeaf(i, j, n, fanout, proof, leafHashCollection)
 
-			// 获取对象哈希
-			objHashes := leafHashCollection[i : j+1]
+		// 获取对象哈希
+		objHashes := leafHashCollection[i : j+1]
 
-			// 重构范围证明
-			hRe := ReconstructRangeProof(proof, fanout, objHashes, constructor.Hasher)
+		// 重构范围证明
+		hRe := ReconstructRangeProof(proof, fanout, objHashes, constructor.Hasher)
 
-			// 验证
-			if hRe != root {
-				t.Errorf("i: %d, j: %d, h_re: %v, root: %v", i, j, hRe, root)
-			}
-
-			cnt++
+		// 验证
+		if hRe != root {
+			t.Errorf("i: %d, j: %d, h_re: %v, root: %v", i, j, hRe, root)
 		}
+
+		cnt++
+		
 	}
 
 	averageVerify := time.Since(verifyStart).Nanoseconds() / int64(cnt)

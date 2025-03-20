@@ -107,7 +107,8 @@ func (l *Level) levelReachCapacity(config *util.Configs) bool {
 func (l *Level) ComputeDigest() util.H256 {
 	bytes := make([]byte, 0)
 	for _, run := range l.RunVec {
-		runHash := run.ComputeDigest()
+		//runHash := run.ComputeDigest()
+		runHash := run.Digest
 		bytes = append(bytes, runHash[:]...)
 	}
 	

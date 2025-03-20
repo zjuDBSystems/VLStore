@@ -1,4 +1,4 @@
-package memdb
+package memtable
 
 import (
 	"VLStore/util"

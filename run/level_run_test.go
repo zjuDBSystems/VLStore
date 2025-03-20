@@ -35,7 +35,6 @@ func generateRandomKeyValues(n int, seed int64) []util.KeyValue {
 	return keyValues
 }
 
-
 // 测试LevelRun的哈希功能
 func TestLevelRunHash(t *testing.T) {
 	dirName := "test_storage"
@@ -248,4 +247,102 @@ func TestInMemoryMergeAndRunConstruction(t *testing.T) {
 	if computedDigest != loadedRun.Digest {
 		t.Errorf("Digest mismatch: expected %x, got %x", loadedRun.Digest, computedDigest)
 	}
+}
+
+// TestProveAndVerify tests proof generation and verification with sequential log data
+func TestProveAndVerify(t *testing.T) {
+	n := 1000000
+	epsilon := 23
+	fanout := 16
+	dirName := "test_prove_storage"
+
+	// Remove test directory if it exists
+	if _, err := os.Stat(dirName); err == nil {
+		os.RemoveAll(dirName)
+	}
+
+	// Create test directory
+	err := os.MkdirAll(dirName, 0755)
+	if err != nil {
+		t.Fatalf("Failed to create test directory: %v", err)
+	}
+	defer os.RemoveAll(dirName)
+
+	// Generate address keys (similar to AddrKey in Rust code)
+	// In our case, we'll use util.Key for simplicity
+	r := rand.New(rand.NewSource(1))
+	keyValues := make([]util.KeyValue, 0)
+	for i := 0; i < n; i++ {
+		keyValues = append(keyValues, util.KeyValue{Key: util.Key(i), Value: make([]byte, 32)})
+	}
+
+	// Create in-memory iterator
+	it := NewInMemKeyValueIterator(keyValues)
+
+	// Setup configuration
+	runID := 1
+	levelID := 0
+
+	configs := util.NewConfigs(
+		fanout,
+		epsilon,
+		dirName,
+		n,
+		2, // size ratio
+	)
+
+	// Construct run
+	run, err := ConstructRunByInMemoryTree(it, runID, levelID, dirName, epsilon, fanout, configs.MaxNumOfStatesInARun(levelID), 1, 2)
+	if err != nil {
+		t.Fatalf("Failed to construct run: %v", err)
+	}
+
+
+	fmt.Printf("Run digest: %x\n", run.Digest)
+	totalRootHash := run.Digest
+
+	// Test proving random existing keys
+	m := 10
+	successCount := 0
+	totalTests := 0
+
+	for i := 0; i < m; i++ {
+		// lb为0-n之间的随机值
+		lb := util.Key(r.Int63() % int64(n))
+		ub := lb + 100
+
+
+		// Generate proof
+		results, proof := run.proveRange(lb, ub, configs)
+
+		// Verify proof
+		isValid := VerifyRunProof(lb, ub, results, proof, configs.Fanout, totalRootHash)
+
+		totalTests++
+		if isValid {
+			successCount++
+		} else {
+			t.Errorf("Verification failed for key %d, %d", lb, ub)
+		}
+	}
+
+	// Test proving a random non-existent key
+	randomKey := util.Key(r.Int63())
+	lb := randomKey + 3*1000000
+	ub := randomKey + 4*1000000
+
+	// Generate proof
+	results, proof := run.proveRange(lb, ub, configs)
+
+	// Verify proof
+	isValid := VerifyRunProof(lb, ub, results, proof, configs.Fanout, totalRootHash)
+
+	totalTests++
+	if isValid {
+		successCount++
+	} else {
+		t.Errorf("Verification failed for random key %d", randomKey)
+	}
+
+	fmt.Printf("Successfully verified %d/%d proofs\n", successCount, totalTests)
 }
