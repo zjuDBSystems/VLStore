@@ -15,6 +15,10 @@ type MBTree struct {
 	hasher util.Hasher
 }
 
+func (t *MBTree) GetHash() util.H256 {
+	return t.root.GetHash()
+}
+
 func (t *MBTree) KeyNum() int {
 	return t.keyNum
 }
@@ -681,7 +685,7 @@ func (t *MBTree) GenerateRangeProof(startKey, endKey util.Key) ([]util.KeyValue,
 	return results, proof
 }
 
-func (t *MBTree) ReconstructRangeProof(startKey, endKey util.Key, results []util.KeyValue, proof RangeProof) util.H256 {
+func ReconstructRangeProof(startKey, endKey util.Key, results []util.KeyValue, proof RangeProof) util.H256 {
 	// if the result is empty and the proof is empty, return the default hash
 	if len(results) == 0 && len(proof.Levels) == 0 {
 		return util.H256{}

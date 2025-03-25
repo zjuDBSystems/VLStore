@@ -313,7 +313,7 @@ func TestProveAndVerify(t *testing.T) {
 
 
 		// Generate proof
-		results, proof := run.proveRange(lb, ub, configs)
+		results, proof := run.ProveRange(lb, ub, configs)
 
 		// Verify proof
 		isValid := VerifyRunProof(lb, ub, results, proof, configs.Fanout, totalRootHash)
@@ -332,7 +332,7 @@ func TestProveAndVerify(t *testing.T) {
 	ub := randomKey + 4*1000000
 
 	// Generate proof
-	results, proof := run.proveRange(lb, ub, configs)
+	results, proof := run.ProveRange(lb, ub, configs)
 
 	// Verify proof
 	isValid := VerifyRunProof(lb, ub, results, proof, configs.Fanout, totalRootHash)

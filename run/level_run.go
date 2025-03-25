@@ -388,7 +388,7 @@ If the filter does show that the addr_key does not exist, use the filter + MHT r
 If the filter cannot show, use the MHT to prove the result, add the filter's hash to the proof.
 */
 
-func (lr *LevelRun) proveRange(startKey, endKey util.Key, configs *util.Configs) ([]util.KeyValue, *RunProof) {
+func (lr *LevelRun) ProveRange(startKey, endKey util.Key, configs *util.Configs) ([]util.KeyValue, *RunProof) {
 	// init the proof
 	proof := NewRunProof()
 
@@ -412,7 +412,9 @@ func (lr *LevelRun) proveRange(startKey, endKey util.Key, configs *util.Configs)
 
 	// Load key-values from the range
 	keyValues := lr.ValueReader.ReadKeyValuesRange(posL, posR)
-
+	if len(keyValues) == 0 {
+		return nil, proof
+	}
 	// Binary search to find exact positions in the retrieved data
 	lowerIndex := sort.Search(len(keyValues), func(i int) bool {
 		return keyValues[i].Key >= startKey
@@ -420,16 +422,15 @@ func (lr *LevelRun) proveRange(startKey, endKey util.Key, configs *util.Configs)
 	upperIndex := sort.Search(len(keyValues), func(i int) bool {
 		return keyValues[i].Key >= endKey
 	})
-
 	var leftProofPos int = -1
 	var rightProofPos int = -1
 
     if lowerIndex == len(keyValues) || upperIndex == len(keyValues) {
 		if lowerIndex == len(keyValues) {
-			leftProofPos = numOfValues-1
+			leftProofPos = lowerIndex + posL - 1
 		}
 		if upperIndex == len(keyValues) {
-			rightProofPos = numOfValues-1
+			rightProofPos = upperIndex + posL - 1
 		}
 	}else{
 		// Derive the actual position by adding offset pos_l
@@ -444,10 +445,18 @@ func (lr *LevelRun) proveRange(startKey, endKey util.Key, configs *util.Configs)
 			rightProofPos++
 		}
 	}
-
-
+	
+	// 打印leftProofPos 和 rightProofPos
+	//fmt.Println("leftProofPos: ", leftProofPos)
+	//fmt.Println("rightProofPos: ", rightProofPos)
 	// Get the result key-value pairs
 	resultData := keyValues[leftProofPos-posL : rightProofPos-posL+1]
+	// 打印resultData 中的key
+	//fmt.Println("resultData :")
+	//for _, kv := range resultData {
+	//	fmt.Print(kv.Key, " ")
+	//}
+	//fmt.Println()
 
 	// Generate non-leaf range proof
 	fanout := configs.Fanout
@@ -488,3 +497,30 @@ func VerifyRunProof(startKey, endKey util.Key, results []util.KeyValue, proof *R
 	reconstructMerkleRoot := ReconstructRangeProof(rangeProof, fanout, resultsHashes, util.NewHasher(util.BLAKE3))
 	return reconstructMerkleRoot == rootHash
 }
+
+func ReconstructRunProof(startKey, endKey util.Key, results []util.KeyValue, proof *RunProof, fanout int) (bool, util.H256) {
+	for i, result := range results {
+		if i == 0 {
+			if result.Key >= startKey {
+				return false, util.H256{}
+			}
+		}else if i == len(results)-1 {
+			if result.Key <= endKey {
+				return false, util.H256{}
+			}
+		}else{
+			if result.Key < startKey || result.Key > endKey {
+				return false, util.H256{}
+			}
+		}
+	}
+	rangeProof := proof.rangeProof
+	resultsHashes := make([]util.H256, len(results))
+	for i, result := range results {
+		resultsHashes[i] = result.ComputeHash(util.NewHasher(util.BLAKE3))
+	}
+	
+	reconstructMerkleRoot := ReconstructRangeProof(rangeProof, fanout, resultsHashes, util.NewHasher(util.BLAKE3))
+	return true, reconstructMerkleRoot
+}
+

@@ -232,7 +232,7 @@ func TestEmptyTree(t *testing.T) {
 	endKey := util.Key(4)
 
 	results, proof := tree.GenerateRangeProof(startKey, endKey)
-	hash := tree.ReconstructRangeProof(startKey, endKey, results, proof)
+	hash := ReconstructRangeProof(startKey, endKey, results, proof)
 
 	// 空树的根哈希应该是nil
 	var expectedHash util.H256
@@ -265,7 +265,7 @@ func TestInMemoryMBTree(t *testing.T) {
 			endKey := util.Key(j)
 
 			results, proof := tree.GenerateRangeProof(startKey, endKey)
-			hash := tree.ReconstructRangeProof(startKey, endKey, results, proof)
+			hash := ReconstructRangeProof(startKey, endKey, results, proof)
 
 			// 计算整棵树的哈希
 			expectedHash := tree.root.GetHash()
@@ -287,6 +287,9 @@ func TestInMemoryMBTree2(t *testing.T) {
 
 	// 插入数据
 	for i := 1; i <= n; i++ {
+		if i == 26 || i == 130 || i == 27 || i == 129 || i == 126{
+			continue
+		}
 		key := util.Key(i)
 		value := []byte(fmt.Sprintf("value-%d", i))
 		tree.Insert(key, value)
@@ -298,9 +301,51 @@ func TestInMemoryMBTree2(t *testing.T) {
 	endKey := util.Key(130)
 
 	results, proof := tree.GenerateRangeProof(startKey, endKey)
-	//fmt.Println("results", results)
+	// 打印results 中的key
+	for _, kv := range results {
+		fmt.Print(kv.Key, " ")
+	}
+	fmt.Println()
 	//fmt.Println("proof", proof)
-	hash := tree.ReconstructRangeProof(startKey, endKey, results, proof)
+	hash := ReconstructRangeProof(startKey, endKey, results, proof)
+
+	// 计算整棵树的哈希
+	expectedHash := tree.root.GetHash()
+
+	if hash != expectedHash {
+		t.Errorf("范围 [%d, %d] 的哈希不匹配: 期望 %v, 得到 %v",
+			startKey, endKey, expectedHash, hash)
+	}
+}
+
+func TestInMemoryMBTree3(t *testing.T) {
+	fanout := 4
+
+	tree := NewBPlusTree(fanout)
+
+	// 插入数据
+	for i := 36; i <= 54; i++ {
+		if i == 44 || i == 45 || i == 46 {
+			continue
+		}
+		key := util.Key(i)
+		value := []byte(fmt.Sprintf("value-%d", i))
+		tree.Insert(key, value)
+	}
+
+	fmt.Println("完成插入")
+	// 测试所有可能的范围
+	startKey := util.Key(44)
+	endKey := util.Key(46)
+
+	results, proof := tree.GenerateRangeProof(startKey, endKey)
+	// 打印results 中的key
+	for _, kv := range results {
+		fmt.Print(kv.Key, " ")
+	}
+	fmt.Println()
+	//fmt.Println("proof", proof)
+	hash := ReconstructRangeProof(startKey, endKey, results, proof)
 
 	// 计算整棵树的哈希
 	expectedHash := tree.root.GetHash()

@@ -75,6 +75,14 @@ func (h *Blake3Hasher) HashBytes(bytes []byte) H256 {
 	return result
 }
 
+func (h *Blake3Hasher) ComputeConcatHash(hashVec []H256) H256 {
+	bytes := make([]byte, 0)
+	for _, hash := range hashVec {
+		bytes = append(bytes, hash[:]...)
+	}
+	return h.HashBytes(bytes)
+}
+
 // 哈希工厂方法
 func NewHasher(algo Algorithm) Hasher {
 	switch algo {
