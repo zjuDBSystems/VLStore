@@ -247,7 +247,7 @@ func (r *HashPageReader) proveNonLeaf(left int, right int, numOfData int, fanout
 			for pageId := pageIdL; pageId <= pageIdR; pageId++ {
 				hashes, err := r.ReadPageAt(pageId)
 				if err != nil {
-					return nil
+					panic(err)
 				}
 				v = append(v, hashes...)
 			}
@@ -416,8 +416,9 @@ type RangeProof struct {
 
 func ReconstructRangeProof(proof *RangeProof, fanout int, objHashes []util.H256, hasher util.Hasher) util.H256 {
 	// 打印proof.indexList
-	fmt.Println("proof: ", proof)
-	fmt.Println("proof.indexList: ", proof.indexList)
+	fmt.Println()
+	//fmt.Println("proof: ", proof)
+	//fmt.Println("proof.indexList: ", proof.indexList)
 	l := proof.indexList[0]
 	r := proof.indexList[1]
 

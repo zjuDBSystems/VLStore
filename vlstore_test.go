@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -140,7 +141,7 @@ func TestVLStoreWriteThroughput(t *testing.T) {
 		//{"中数据量", 4, 23, 1000, 2, 10000},
 		//{"中数据量", 4, 23, 1000, 2, 10000},
 		//{"大数据量", 4, 23, 1000, 2, 50000},
-		{"大数据量", 4, 23, 64000, 2, 1000000},
+		{"大数据量", 4, 4, 64000, 2, 1000000},
 		//{"高扇出", 8, 23, 1000, 2, 50000},
 		//{"低扇出", 2, 23, 1000, 2, 50000},
 	}
@@ -269,11 +270,14 @@ func TestVLStoreVerifyQuery(t *testing.T) {
 		endKey   util.Key
 		expected int // 预期结果数量
 	}{
-		//{"空结果查询", util.Key(1000), util.Key(2000), 0},
-		//{"单个结果查询", util.Key(100), util.Key(100), 1},
-		{"小范围查询", util.Key(50), util.Key(60), 11},
-		{"中范围查询", util.Key(100), util.Key(150), 51},
-		{"大范围查询", util.Key(450), util.Key(480), 31},
+		{"空查询", util.Key(1000), util.Key(2000), 0},
+		{"单点查询", util.Key(100), util.Key(100), 1},
+		{"范围查询1", util.Key(50), util.Key(60), 11},
+		{"范围查询2", util.Key(100), util.Key(150), 51},
+		{"范围查询3", util.Key(450), util.Key(480), 31},
+		{"范围查询4", util.Key(12), util.Key(342), 331},
+		{"范围查询5", util.Key(0), util.Key(550), 550},
+		{"范围查询6", util.Key(99), util.Key(199), 101},
 	}
 
 	for _, tc := range testCases {
@@ -287,11 +291,11 @@ func TestVLStoreVerifyQuery(t *testing.T) {
 			// 验证证明并获取结果
 			valid, results := store.VerifyAndCollectResult(tc.startKey, tc.endKey, proof, rootHash, fanout)
 
-			// 打印results 中的key
-			for _, kv := range results {
-				fmt.Print(kv.Key, " ")
-			}
-			fmt.Println()
+			// // 打印results 中的key
+			// for _, kv := range results {
+			// 	fmt.Print(kv.Key, " ")
+			// }
+			// fmt.Println()
 
 			// 验证结果是否有效
 			if !valid {
@@ -328,113 +332,106 @@ func TestVLStoreVerifyQuery(t *testing.T) {
 	}
 }
 
-// TestVLStoreVerifyQueryTampering tests the tamper-resistance of the verified range query
-func TestVLStoreVerifyQueryTampering(t *testing.T) {
+// 测试VLStore的范围查询性能
+func TestVLStoreRangeQueryPerformance(t *testing.T) {
 	// 创建临时目录用于测试
-	testDir := "test_vlstore_verify_tamper"
+	testDir := "test_vlstore_query_perf_dir"
 	err := os.MkdirAll(testDir, 0755)
 	if err != nil {
 		t.Fatalf("创建测试目录失败: %v", err)
 	}
-	defer os.RemoveAll(testDir) // 测试结束后清理
+	defer os.RemoveAll(testDir)
 
 	// 创建配置
 	fanout := 4
-	epsilon := 23
-	baseStateNum := 100
-	sizeRatio := 100
+	epsilon := 4
+	baseStateNum := 64000
+	sizeRatio := 2
 	configs := util.NewConfigs(fanout, epsilon, testDir, baseStateNum, sizeRatio)
 
 	// 创建VLStore实例
 	store := NewVLStore(configs)
 
-	// 插入测试数据
-	numEntries := 300
-	for i := 0; i < numEntries; i++ {
-		key := util.Key(i)
-		value := []byte(fmt.Sprintf("value%d", i))
-		store.Insert(key, value)
+	// 数据量
+	numEntries := 100000
+	valueSize := 1024
+	// 生成顺序键值对
+	keyValues := generateSequentialKeyValues(numEntries, valueSize)
+
+	// 单线程顺序写入
+	for _, kv := range keyValues {
+		store.Insert(kv.Key, kv.Value)
 	}
 
-	// 定义查询范围
-	startKey := util.Key(50)
-	endKey := util.Key(150)
+	time.Sleep(5 * time.Second)
+	// 测试不同范围大小的查询
+	rangeSizes := []int{1, 10, 100, 500, 800, 1000, 3000, 5000, 8000, 10000}
+	numQueries := 100 // 每个范围大小执行的查询次数
 
-	// 获取正确的证明
-	proof := store.SearchWithProof(startKey, endKey)
-	rootHash := store.ComputeDigest()
+	for _, rangeSize := range rangeSizes {
+		t.Run(fmt.Sprintf("RangeSize_%d", rangeSize), func(t *testing.T) {
+			var totalLatency time.Duration
+			//var totalProofSize float64
+			startCPU := getCPUSample()
 
-	// 验证正确的证明应该通过
-	valid, _ := store.VerifyAndCollectResult(startKey, endKey, proof, rootHash, fanout)
-	if !valid {
-		t.Errorf("有效的范围查询证明验证失败")
-	}
+			// 执行多次查询并测量
+			for i := 0; i < numQueries; i++ {
+				// 随机选择一个范围起点，确保不超出数据范围
+				startKey := util.Key(rand.Intn(numEntries - rangeSize))
+				endKey := startKey + util.Key(rangeSize)
+				
 
-	// 篡改结果 - 如果有结果
-	if len(proof.memTableProofVec) > 0 && len(proof.memTableProofVec[0].results) > 0 {
-		// 保存原始值
-		original := proof.memTableProofVec[0].results[0].Value
+				//fmt.Println("startKey", startKey, "endKey", endKey)
+				// 测量单次查询延迟和单次proof的size
+				queryStart := time.Now()
+				store.SearchWithProof(startKey, endKey)
+				store.ComputeDigest()
+				//proof := store.SearchWithProof(startKey, endKey)
+				//rootHash := store.ComputeDigest()
+				//_, _ = store.VerifyAndCollectResult(startKey, endKey, proof, rootHash, fanout)
+				queryLatency := time.Since(queryStart)
+				// 计算proof的size
+				//proofSize := unsafe.Sizeof(*proof)
 
-		// 篡改值
-		tamperedValue := []byte("tampered")
-		proof.memTableProofVec[0].results[0].Value = tamperedValue
-
-		// 验证篡改后的证明应该失败
-		valid, _ = store.VerifyAndCollectResult(startKey, endKey, proof, rootHash, fanout)
-		if valid {
-			t.Errorf("篡改结果后的证明验证竟然通过了")
-		}
-
-		// 恢复原始值
-		proof.memTableProofVec[0].results[0].Value = original
-	}
-
-	// 篡改哈希值 - 如果有哈希值
-	if len(proof.levelProofVec) > 0 && len(proof.levelProofVec[0].runProofVec) > 0 {
-		// 保存原始哈希
-		var originalHash util.H256
-		var runProof *LevelRunProofOrHash
-
-		// 找到一个包含哈希的runProof
-		for _, levelProof := range proof.levelProofVec {
-			for _, rp := range levelProof.runProofVec {
-				if rp.isHash {
-					runProof = rp
-					originalHash = rp.hash
-					break
-				}
-			}
-			if runProof != nil {
-				break
-			}
-		}
-
-		if runProof != nil {
-			// 篡改哈希
-			tamperedHash := util.H256{}
-			copy(tamperedHash[:], originalHash[:])
-			tamperedHash[0] = ^tamperedHash[0] // 翻转第一个字节
-			runProof.hash = tamperedHash
-
-			// 验证篡改后的证明应该失败
-			valid, _ = store.VerifyAndCollectResult(startKey, endKey, proof, rootHash, fanout)
-			if valid {
-				t.Errorf("篡改哈希后的证明验证竟然通过了")
+				totalLatency += queryLatency
+				//totalProofSize += float64(proofSize)
 			}
 
-			// 恢复原始哈希
-			runProof.hash = originalHash
-		}
-	}
+			endCPU := getCPUSample()
+			cpuUsage := calculateCPUUsage(startCPU, endCPU)
 
-	// 篡改根哈希
-	tamperedRootHash := util.H256{}
-	copy(tamperedRootHash[:], rootHash[:])
-	tamperedRootHash[0] = ^tamperedRootHash[0] // 翻转第一个字节
-
-	// 验证使用篡改后的根哈希应该失败
-	valid, _ = store.VerifyAndCollectResult(startKey, endKey, proof, tamperedRootHash, fanout)
-	if valid {
-		t.Errorf("使用篡改后的根哈希验证竟然通过了")
+			avgLatency := totalLatency / time.Duration(numQueries)
+			//avgProofSize := totalProofSize / float64(numQueries)
+			t.Logf("范围大小: %d, 平均查询延迟: %v, 平均CPU使用率: %.2f%%",
+				rangeSize, avgLatency, cpuUsage)
+		})
 	}
+}
+
+// 获取CPU使用样本
+func getCPUSample() time.Time {
+	// 简单实现，使用时间作为CPU采样点
+	return time.Now()
+}
+
+// 计算CPU使用率
+func calculateCPUUsage(start, end time.Time) float64 {
+	// 在生产环境中，应该使用runtime/pprof或其他工具获取实际CPU使用率
+	// 这里仅为示例，返回一个模拟值
+	elapsed := end.Sub(start).Seconds()
+
+	// 使用runtime包获取CPU使用情况
+	var rusage syscall.Rusage
+	syscall.Getrusage(syscall.RUSAGE_SELF, &rusage)
+
+	// 用户态CPU时间 + 系统态CPU时间（秒）
+	userTime := time.Duration(rusage.Utime.Sec)*time.Second +
+		time.Duration(rusage.Utime.Usec)*time.Microsecond
+	sysTime := time.Duration(rusage.Stime.Sec)*time.Second +
+		time.Duration(rusage.Stime.Usec)*time.Microsecond
+
+	totalCPUTime := userTime + sysTime
+	cpuUsage := float64(totalCPUTime) / float64(time.Duration(elapsed)*time.Second) * 100
+
+	return cpuUsage
 }

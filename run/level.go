@@ -72,13 +72,11 @@ func (l *Level) Persist(configs *util.Configs) {
 	// store the binary bytes of run_id and run's filter to the output vector
 	for _, run := range l.RunVec {
 		// get the run_id of the current run
-		runID := run.RunID
+		componentID := run.ComponentID
 		// store the binary of run_id 
-		runIDBytes := make([]byte, 8)
-		binary.BigEndian.PutUint64(runIDBytes, uint64(runID))
-		b = append(b, runIDBytes...)
-		// persist the filter of the run if it exists
-		run.PersistFilter(l.LevelID, configs)
+		componentIDBytes := make([]byte, 8)
+		binary.BigEndian.PutUint64(componentIDBytes, uint64(componentID))
+		b = append(b, componentIDBytes...)	
 	}
 
 	levelMetaFileName := l.LevelMetaFileName(configs)
@@ -113,15 +111,4 @@ func (l *Level) ComputeDigest() util.H256 {
 	}
 	
 	return util.NewBlake3Hasher().HashBytes(bytes)
-}
-
-func (l *Level) removeRunFiles(runIdVec []int, levelId int, dirName string) {
-	for _, runId := range runIdVec {
-		valueFileName := FileName(runId, levelId, dirName, "v")
-		modelFileName := FileName(runId, levelId, dirName, "m")
-		mhtFileName := FileName(runId, levelId, dirName, "h")
-		os.Remove(valueFileName)
-		os.Remove(modelFileName)
-		os.Remove(mhtFileName)
-	}
 }

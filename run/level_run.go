@@ -18,22 +18,20 @@ const (
 
 // LevelRun 定义了一个层级中的运行
 type LevelRun struct {
-	RunID       int                // 运行ID
+	ComponentID int                // 组件ID
 	ValueReader *ValuePageReader   // 值读取器
 	ModelReader *ModelPageReader   // 模型读取器
 	MHTReader   *HashPageReader    // MHT读取器
-	Filter      *bloom.BloomFilter // 布隆过滤器
-	FilterHash  *util.H256         // 过滤器的哈希值
-	Digest      util.H256          // MHT根和过滤器哈希的摘要
+	Digest      util.H256          // MHT根摘要
 }
 
 // Load 根据运行ID、层级ID和配置加载一个运行
-func Load(runID int, levelID int, configs *util.Configs) (*LevelRun, error) {
+func Load(componentID int, levelID int, configs *util.Configs) (*LevelRun, error) {
 	// 定义值、模型、MHT和过滤器的文件名
-	valueFileName := FileName(runID, levelID, configs.DirName, "v")
-	modelFileName := FileName(runID, levelID, configs.DirName, "m")
-	mhtFileName := FileName(runID, levelID, configs.DirName, "h")
-	filterFileName := FileName(runID, levelID, configs.DirName, "f")
+	valueFileName := FileName(componentID, levelID, configs.DirName, "v")
+	modelFileName := FileName(componentID, levelID, configs.DirName, "m")
+	mhtFileName := FileName(componentID, levelID, configs.DirName, "h")
+	filterFileName := FileName(componentID, levelID, configs.DirName, "f")
 
 	// 加载三个读取器
 	valueReader, err := LoadValuePageReader(valueFileName)
@@ -77,44 +75,22 @@ func Load(runID int, levelID int, configs *util.Configs) (*LevelRun, error) {
 	// 获取MHT根哈希
 	mhtRoot := mhtReader.Root
 
-	// 计算过滤器哈希（如果存在）
-	var filterHash *util.H256 = nil
-	if filter != nil {
-		filterData, err := filter.MarshalBinary()
-		if err != nil {
-			return nil, err
-		}
-		hash := util.NewHasher(util.BLAKE3).HashBytes(filterData)
-		filterHash = &hash
-	}
-
 	// 计算摘要
-	//digest := LoadDigest(mhtRoot, filterHash)
 	digest := mhtRoot
 	return &LevelRun{
-		RunID:       runID,
+		ComponentID: componentID,
 		ValueReader: valueReader,
 		ModelReader: modelReader,
 		MHTReader:   mhtReader,
-		Filter:      filter,
-		FilterHash:  filterHash,
 		Digest:      digest,
 	}, nil
 }
 
 // ConstructRunByInMemoryTree 使用内存迭代器构建运行
-func ConstructRunByInMemoryTree(inputs *InMemKeyValueIterator, runID int, levelID int, dirName string, epsilon int, fanout int, maxNumOfValue int, levelNumOfRun int, sizeRatio int) (*LevelRun, error) {
-	valueFileName := FileName(runID, levelID, dirName, "v")
-	modelFileName := FileName(runID, levelID, dirName, "m")
-	mhtFileName := FileName(runID, levelID, dirName, "h")
-
-	// 估算过滤器大小，决定是否创建过滤器
-	estFilterSize := EstimateAllFilterSize(levelID, maxNumOfValue, levelNumOfRun, sizeRatio)
-	var filter *bloom.BloomFilter = nil
-	if estFilterSize <= MAX_FILTER_SIZE {
-		// 创建布隆过滤器，使用预估的元素数量和指定的误报率
-		filter = bloom.NewWithEstimates(uint(maxNumOfValue), FILTER_FP_RATE)
-	}
+func ConstructRunByInMemoryTree(inputs *InMemKeyValueIterator, componentID int, levelID int, dirName string, epsilon int, fanout int, maxNumOfValue int, levelNumOfRun int, sizeRatio int) (*LevelRun, error) {
+	valueFileName := FileName(componentID, levelID, dirName, "v")
+	modelFileName := FileName(componentID, levelID, dirName, "m")
+	mhtFileName := FileName(componentID, levelID, dirName, "h")
 
 	// 根据输入值构建新的值文件、模型文件、MHT文件，并将值键插入过滤器
 	valueWriter, err := NewValuePageWriter(valueFileName)
@@ -137,12 +113,6 @@ func ConstructRunByInMemoryTree(inputs *InMemKeyValueIterator, runID int, levelI
 		keyValue := inputs.Next()
 		// add the KV's key to the model constructor
 		modelConstructor.AppendKey(keyValue.Key)
-		// insert the KV's key to the filter
-		if filter != nil {
-			keyBytes := make([]byte, 8)
-			binary.LittleEndian.PutUint64(keyBytes, uint64(keyValue.Key))
-			filter.Add(keyBytes)
-		}
 		// add the KV's hash to the mht constructor
 		mhtConstructor.Append(keyValue.ComputeHash(util.NewHasher(util.BLAKE3)))
 		// add the KV's value to the value writer
@@ -163,45 +133,20 @@ func ConstructRunByInMemoryTree(inputs *InMemKeyValueIterator, runID int, levelI
 	// 获取MHT根哈希
 	mhtRoot := mhtReader.Root
 
-	//计算过滤器哈希（如果存在）
-	var filterHash *util.H256 = nil
-	if filter != nil {
-		filterData, err := filter.MarshalBinary()
-		if err != nil {
-			return nil, err
-		}
-		hash := util.NewHasher(util.BLAKE3).HashBytes(filterData)
-		filterHash = &hash
-	}
-
-	// 计算摘要(暂时不计算过滤器哈希)
+	// 计算摘要
 	digest := mhtRoot
 
 	return &LevelRun{
-		RunID:       runID,
+		ComponentID: componentID,
 		ValueReader: valueReader,
 		ModelReader: modelReader,
 		MHTReader:   mhtReader,
-		Filter:      filter,
-		FilterHash:  filterHash,
 		Digest:      digest,
 	}, nil
 }
 
 // SearchRun 在运行中搜索键
 func (lr *LevelRun) SearchRun(key util.Key, configs *util.Configs) *util.KeyValue {
-	// 尝试使用过滤器测试键是否存在
-	if lr.Filter != nil {
-		// 将键转换为字节数组
-		keyBytes := make([]byte, 8)
-		binary.LittleEndian.PutUint64(keyBytes, uint64(key))
-
-		// 如果过滤器不包含键，则返回nil
-		if !lr.Filter.Test(keyBytes) {
-			return nil
-		}
-	}
-
 	// 使用模型文件预测值文件中的位置
 	// 计算边界键
 	epsilon := configs.Epsilon
@@ -230,91 +175,10 @@ func (lr *LevelRun) SearchRun(key util.Key, configs *util.Configs) *util.KeyValu
 	return nil
 }
 
-// PersistFilter 如果过滤器存在，则持久化它
-func (lr *LevelRun) PersistFilter(levelID int, configs *util.Configs) error {
-	if lr.Filter != nil {
-		// 初始化过滤器文件名
-		filterFileName := FileName(lr.RunID, levelID, configs.DirName, "f")
-
-		// 序列化过滤器
-		filterData, err := lr.Filter.MarshalBinary()
-		if err != nil {
-			return err
-		}
-
-		// 获取序列化字节的长度
-		bytesLen := uint32(len(filterData))
-
-		// 创建要持久化到过滤器文件的向量
-		data := make([]byte, 4+len(filterData))
-		binary.BigEndian.PutUint32(data[:4], bytesLen)
-		copy(data[4:], filterData)
-
-		// 写入文件
-		file, err := os.OpenFile(filterFileName, os.O_CREATE|os.O_RDWR|os.O_TRUNC, 0666)
-		if err != nil {
-			return err
-		}
-		defer file.Close()
-
-		_, err = file.Write(data)
-		if err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// EstimateAllFilterSize 估算所有过滤器的大小
-func EstimateAllFilterSize(levelID int, maxNumOfValue int, levelNumOfRun int, sizeRatio int) int {
-	totalSize := 0
-	curLevel := levelID
-	curNumOfValue := maxNumOfValue
-
-	// 计算当前级别的过滤器大小
-	curLevelFilterSize := util.ComputeBitmapSizeInBytes(curNumOfValue, FILTER_FP_RATE) * levelNumOfRun
-	totalSize += curLevelFilterSize
-
-	// 计算所有低级别的过滤器大小
-	for curLevel >= 0 {
-		curLevel--
-		curNumOfValue /= sizeRatio
-		curLevelFilterSize = util.ComputeBitmapSizeInBytes(curNumOfValue, FILTER_FP_RATE) * sizeRatio
-		totalSize += curLevelFilterSize
-	}
-
-	return totalSize
-}
-
-// ComputeDigest 计算LevelRun的摘要
-// func (lr *LevelRun) ComputeDigest() util.H256 {
-// 	mhtRoot := lr.MHTReader.Root
-// 	var bytes []byte
-// 	bytes = append(bytes, mhtRoot[:]...)
-
-// 	if lr.FilterHash != nil {
-// 		bytes = append(bytes, (*lr.FilterHash)[:]...)
-// 	}
-
-// 	return util.NewHasher(util.BLAKE3).HashBytes(bytes)
-// }
-
 // FileName 生成不同文件类型的文件名
 func FileName(runID int, levelID int, dirName string, fileType string) string {
 	return fmt.Sprintf("%s/%s_%d_%d.dat", dirName, fileType, levelID, runID)
 }
-
-// LoadDigest 根据MHT根和过滤器（如果存在）计算运行的摘要
-// func LoadDigest(mhtRoot util.H256, filterHash *util.H256) util.H256 {
-// 	var bytes []byte
-// 	bytes = append(bytes, mhtRoot[:]...)
-
-// 	if filterHash != nil {
-// 		bytes = append(bytes, (*filterHash)[:]...)
-// 	}
-
-// 	return util.NewHasher(util.BLAKE3).HashBytes(bytes)
-// }
 
 // LoadKeyValues 加载LevelRun中的所有键值对
 func (lr *LevelRun) LoadKeyValues() []util.KeyValue {
@@ -329,19 +193,6 @@ func (lr *LevelRun) LoadKeyValues() []util.KeyValue {
 		result = append(result, pageKeyValues...)
 	}
 	return result
-}
-
-// FilterCost 返回过滤器的大小信息
-func (lr *LevelRun) FilterCost() int {
-	var filterSize int = 0
-	if lr.Filter != nil {
-		// 获取过滤器的大小
-		// 注意：bloom库可能没有直接提供内存大小的方法，这里使用近似计算
-		filterData, _ := lr.Filter.MarshalBinary()
-		filterSize = len(filterData)
-	}
-
-	return filterSize
 }
 
 type RunProof struct {
@@ -410,6 +261,10 @@ func (lr *LevelRun) ProveRange(startKey, endKey util.Key, configs *util.Configs)
 	posL := int(math.Min(math.Max(float64(predPosLow-epsilon-1), 0), float64(numOfValues-1)))
 	posR := int(math.Min(float64(predPosUpper+epsilon+3), float64(numOfValues-1)))
 
+	// 打印posL 和 posR
+	//fmt.Println("posL: ", posL)
+	//fmt.Println("posR: ", posR)
+
 	// Load key-values from the range
 	keyValues := lr.ValueReader.ReadKeyValuesRange(posL, posR)
 	if len(keyValues) == 0 {
@@ -422,28 +277,28 @@ func (lr *LevelRun) ProveRange(startKey, endKey util.Key, configs *util.Configs)
 	upperIndex := sort.Search(len(keyValues), func(i int) bool {
 		return keyValues[i].Key >= endKey
 	})
-	var leftProofPos int = -1
-	var rightProofPos int = -1
+	// 打印lowerIndex 和 upperIndex
+	//fmt.Println("lowerIndex: ", lowerIndex)
+	//fmt.Println("upperIndex: ", upperIndex)
 
-    if lowerIndex == len(keyValues) || upperIndex == len(keyValues) {
-		if lowerIndex == len(keyValues) {
-			leftProofPos = lowerIndex + posL - 1
-		}
-		if upperIndex == len(keyValues) {
-			rightProofPos = upperIndex + posL - 1
-		}
-	}else{
-		// Derive the actual position by adding offset pos_l
-		leftProofPos = lowerIndex + posL
-		rightProofPos = upperIndex + posL
+	// Derive the actual position by adding offset pos_l
+	leftProofPos := lowerIndex + posL
+	rightProofPos := upperIndex + posL
+	// 打印leftProofPos 和 rightProofPos
+	//fmt.Println("leftProofPos: ", leftProofPos)
+	//fmt.Println("rightProofPos: ", rightProofPos)
 
-		// Adjust boundary positions
-		if leftProofPos != 0 && keyValues[lowerIndex].Key == startKey {
+	// Adjust boundary positions
+	if leftProofPos > 0 && rightProofPos < numOfValues-1{
+		if keyValues[lowerIndex].Key == startKey {
 			leftProofPos--
 		}
-		if rightProofPos != numOfValues-1 {
+		if keyValues[upperIndex].Key == endKey {
 			rightProofPos++
 		}
+	}
+	if rightProofPos == numOfValues {
+		rightProofPos = numOfValues - 1
 	}
 	
 	// 打印leftProofPos 和 rightProofPos
@@ -499,21 +354,24 @@ func VerifyRunProof(startKey, endKey util.Key, results []util.KeyValue, proof *R
 }
 
 func ReconstructRunProof(startKey, endKey util.Key, results []util.KeyValue, proof *RunProof, fanout int) (bool, util.H256) {
-	for i, result := range results {
-		if i == 0 {
-			if result.Key >= startKey {
-				return false, util.H256{}
-			}
-		}else if i == len(results)-1 {
-			if result.Key <= endKey {
-				return false, util.H256{}
-			}
-		}else{
-			if result.Key < startKey || result.Key > endKey {
-				return false, util.H256{}
-			}
-		}
-	}
+	// 打印 results 中的第一个和最后一个key
+	//fmt.Println("results[0].Key: ", results[0].Key)
+	//fmt.Println("results[len(results)-1].Key: ", results[len(results)-1].Key)
+	// for i, result := range results {
+	// 	if i == 0 {
+	// 		if result.Key > startKey {
+	// 			return false, util.H256{}
+	// 		}
+	// 	}else if i == len(results)-1 {
+	// 		if result.Key < endKey {
+	// 			return false, util.H256{}
+	// 		}
+	// 	}else{
+	// 		if result.Key < startKey || result.Key > endKey {
+	// 			return false, util.H256{}
+	// 		}
+	// 	}
+	// }
 	rangeProof := proof.rangeProof
 	resultsHashes := make([]util.H256, len(results))
 	for i, result := range results {

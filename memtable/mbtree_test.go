@@ -20,7 +20,7 @@ func randStringBytes(n int) string {
 }
 
 func TestSequentialInsert(t *testing.T) {
-	tree := NewBPlusTree(4)
+	tree := NewBPlusTree(0, 4)
 
 	var n int64 = 1000000
 
@@ -53,13 +53,13 @@ func TestInsertThroughput(t *testing.T) {
 	)
 
 	// 初始化新树实例
-	tree := NewBPlusTree(fanout)
+	tree := NewBPlusTree(0, fanout)
 
 	// 预热运行(消除冷启动影响)
 	for i := 0; i < 1000; i++ {
 		tree.Insert(util.Key(i), util.Value("preheat"))
 	}
-	tree = NewBPlusTree(fanout) // 重置为干净状态
+	tree = NewBPlusTree(0, fanout) // 重置为干净状态
 
 	// 生成测试数据
 	keys := make([]util.Key, numInserts)
@@ -117,7 +117,7 @@ func TestInsertThroughput(t *testing.T) {
 }
 
 func TestRangeSearch(t *testing.T) {
-	tree := NewBPlusTree(4)
+	tree := NewBPlusTree(0, 4)
 
 	// 插入测试数据
 	numEntries := 1000
@@ -184,7 +184,7 @@ func TestRangeSearchPerformance(t *testing.T) {
 	)
 
 	// 初始化树并插入数据
-	tree := NewBPlusTree(fanout)
+	tree := NewBPlusTree(0, fanout)
 	for i := 0; i < numEntries; i++ {
 		tree.Insert(util.Key(i), util.Value(fmt.Sprintf("v%d", i)))
 	}
@@ -226,7 +226,7 @@ func TestRangeSearchPerformance(t *testing.T) {
 // 测试空树的范围证明
 func TestEmptyTree(t *testing.T) {
 	fanout := 4
-	tree := NewBPlusTree(fanout)
+	tree := NewBPlusTree(0, fanout)
 
 	startKey := util.Key(3)
 	endKey := util.Key(4)
@@ -247,7 +247,7 @@ func TestInMemoryMBTree(t *testing.T) {
 	fanout := 4
 	n := 1234 // 使用较小的值以加快测试速度
 
-	tree := NewBPlusTree(fanout)
+	tree := NewBPlusTree(0, fanout)
 
 	// 插入数据
 	for i := 1; i <= n; i++ {
@@ -283,7 +283,7 @@ func TestInMemoryMBTree2(t *testing.T) {
 	fanout := 4
 	n := 1234 // 使用较小的值以加快测试速度
 
-	tree := NewBPlusTree(fanout)
+	tree := NewBPlusTree(0, fanout)
 
 	// 插入数据
 	for i := 1; i <= n; i++ {
@@ -321,7 +321,7 @@ func TestInMemoryMBTree2(t *testing.T) {
 func TestInMemoryMBTree3(t *testing.T) {
 	fanout := 4
 
-	tree := NewBPlusTree(fanout)
+	tree := NewBPlusTree(0, fanout)
 
 	// 插入数据
 	for i := 36; i <= 54; i++ {

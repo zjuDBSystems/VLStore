@@ -9,7 +9,21 @@ import (
 	"os"
 	"sort"
 	"sync"
+	"sync/atomic"
 )
+type ComponentMeta struct {
+    MinKey util.Key
+    MaxKey util.Key
+    Digest util.H256
+}
+
+func newComponentMeta(minKey util.Key, maxKey util.Key, digest util.H256) *ComponentMeta {
+	return &ComponentMeta{
+		MinKey: minKey,
+		MaxKey: maxKey,
+		Digest: digest,
+	}
+}
 
 /*
 VLStore consists of:
@@ -26,19 +40,22 @@ type VLStore struct {
 	immutableMemTableVecLock   sync.RWMutex
 	flushImmutableMemTableChan chan *memtable.MBTree // channel to notify the flush goroutine to flush immutable memtable to disk
 	levelVec                   []*run.Level
-	runIDCnt                   int // this helps to generate a new run_id
+	componentIDCnt             atomic.Int64 // this helps to generate a component_id
+	componentMetaMap           map[int]*ComponentMeta
 }
 
 // create a new index with given configs
 func NewVLStore(configs *util.Configs) *VLStore {
 	vl := &VLStore{
 		configs:                    configs,
-		memTable:                   memtable.NewBPlusTree(configs.Fanout),
 		immutableMemTableVec:          []*memtable.MBTree{},
 		flushImmutableMemTableChan: make(chan *memtable.MBTree),
 		levelVec:                   []*run.Level{},
-		runIDCnt:                   0,
+		componentIDCnt:             atomic.Int64{},
+		componentMetaMap:           make(map[int]*ComponentMeta),
 	}
+	vl.memTable = memtable.NewBPlusTree(vl.newComponentID(), configs.Fanout)
+	vl.componentMetaMap[vl.memTable.GetComponentID()] = newComponentMeta(-1, -1, util.H256{})
 
 	go vl.flushMemTableWorker()
 
@@ -57,13 +74,14 @@ func (vl *VLStore) getMeta() int {
 	copy(levelLenBytes, file[:8])
 	levelLen := int(binary.BigEndian.Uint64(levelLenBytes))
 
-	// read run_id_cnt from the file
-	runIDCntBytes := make([]byte, 8)
-	copy(runIDCntBytes, file[8:16])
-	runIDCnt := int(binary.BigEndian.Uint64(runIDCntBytes))
-	vl.runIDCnt = runIDCnt
+	// read component_id_cnt（atomic.Int64{},） from the file
+	componentIDCntBytes := make([]byte, 8)
+	copy(componentIDCntBytes, file[8:16])
+	componentIDCnt := int64(binary.BigEndian.Uint64(componentIDCntBytes))
+	vl.componentIDCnt.Store(componentIDCnt)
 
 	// read mem mht from the file
+	// read component_meta_map from the file
 	// TODO: implement this
 	return levelLen
 }
@@ -84,10 +102,10 @@ func Load(configs *util.Configs) *VLStore {
 	return vl
 }
 
-func (vl *VLStore) newRunID() int {
-	// increment the run_id and return it
-	vl.runIDCnt++
-	return vl.runIDCnt
+func (vl *VLStore) newComponentID() int {
+	// increment the component_id and return it
+	componentID := vl.componentIDCnt.Add(1)
+	return int(componentID)
 }
 
 func (vl *VLStore) Insert(key util.Key, value util.Value) {
@@ -96,6 +114,21 @@ func (vl *VLStore) Insert(key util.Key, value util.Value) {
 
 	// directly insert the state into the mem_mht
 	vl.memTable.Insert(key, value)
+
+
+	// update the component_meta_map
+	componentMeta := vl.componentMetaMap[vl.memTable.GetComponentID()]
+
+	if componentMeta.MaxKey == -1 || componentMeta.MaxKey < key {
+		componentMeta.MaxKey = key
+	}
+	if componentMeta.MinKey == -1 || componentMeta.MinKey > key {
+		componentMeta.MinKey = key
+	}
+
+	componentMeta.Digest = vl.memTable.GetHash()
+	vl.componentMetaMap[vl.memTable.GetComponentID()] = componentMeta
+	
 
 	// check if the memtable is full and need to be flushed to disk
 	inMemThreshold := vl.configs.BaseStateNum
@@ -108,7 +141,8 @@ func (vl *VLStore) Insert(key util.Key, value util.Value) {
 		vl.immutableMemTableVec = append(vl.immutableMemTableVec, immutableMemTable)
 		vl.immutableMemTableVecLock.Unlock()
 
-		vl.memTable = memtable.NewBPlusTree(vl.configs.Fanout)
+		vl.memTable = memtable.NewBPlusTree(vl.newComponentID(), vl.configs.Fanout)
+		vl.componentMetaMap[vl.memTable.GetComponentID()] = newComponentMeta(-1, -1, util.H256{})
 		// flush the immutable memtable to disk
 		vl.flushImmutableMemTableChan <- immutableMemTable
 	}
@@ -120,31 +154,71 @@ func (vl *VLStore) Search(key util.Key) util.Value {
 	defer vl.mu.RUnlock()
 
 	// search in the memtable
-	value, isExist := vl.memTable.Search(key)
-	if isExist {
-		return value
+	memTableID := vl.memTable.GetComponentID()
+	memTableMeta := vl.componentMetaMap[memTableID]
+	if key >= memTableMeta.MinKey && key <= memTableMeta.MaxKey {
+		value, isExist := vl.memTable.Search(key)
+		if isExist {
+			return value
+		}
 	}
 
 	// search in the immutable memtable vector
 	for _, mt := range vl.immutableMemTableVec {
-		value, isExist := mt.Search(key)
-		if isExist {
-			return value
+		immutableMemTableID := mt.GetComponentID()
+		immutableMemTableMeta := vl.componentMetaMap[immutableMemTableID]
+		if key >= immutableMemTableMeta.MinKey && key <= immutableMemTableMeta.MaxKey {
+			value, isExist := mt.Search(key)
+			if isExist {
+				return value
+			}
 		}
 	}
 
 	// search other levels on the disk
 	for _, level := range vl.levelVec {
 		for _, run := range level.RunVec {
-			keyValue := run.SearchRun(key, vl.configs)
-			if keyValue != nil {
-				return keyValue.Value
+			runID := run.ComponentID
+			runMeta := vl.componentMetaMap[runID]
+			if key >= runMeta.MinKey && key <= runMeta.MaxKey {
+				keyValue := run.SearchRun(key, vl.configs)
+				if keyValue != nil {
+					return keyValue.Value
+				}
 			}
 		}
 	}
 
 	return nil
 }
+
+
+
+// 返回和查询范围有重叠的组件的component_id
+func (vl *VLStore) SearchRangeFromComponentMeta(startKey util.Key, endKey util.Key) map[int]bool{
+	componentIDSet := make(map[int]bool)
+
+	// 遍历所有组件的元数据
+	for componentID, meta := range vl.componentMetaMap {
+		//fmt.Println("componentID :", componentID, " meta :", meta)
+		// 检查组件的键范围是否与查询范围有重叠
+		if !(meta.MaxKey < startKey || meta.MinKey > endKey) {
+			componentIDSet[componentID] = true
+		}else{
+			componentIDSet[componentID] = false
+		}
+	}
+
+	// // 打印componentIDSet
+	// fmt.Println("componentIDSet :")
+	// for componentID := range componentIDSet {
+	// 	fmt.Print(componentID, " : ", componentIDSet[componentID], ", ")
+	// }
+	// fmt.Println()
+	
+	return componentIDSet
+}
+
 
 type MemTableProofOrHash struct {
 	results []util.KeyValue
@@ -161,7 +235,7 @@ type LevelRunProofOrHash struct {
 }
 
 type LevelProof struct {
-	runProofVec []*LevelRunProofOrHash
+	runProofOrHashVec []*LevelRunProofOrHash
 }
 
 type VLStoreProof struct {
@@ -173,91 +247,89 @@ func (vl *VLStore) SearchWithProof(startKey util.Key, endKey util.Key) *VLStoreP
 	vl.mu.RLock()
 	defer vl.mu.RUnlock()
 
+	// get the component_id vector that has overlap with the query range
+	componentIDSet := vl.SearchRangeFromComponentMeta(startKey, endKey)
+
 	vlStoreProof := &VLStoreProof{
 		memTableProofVec: []*MemTableProofOrHash{},
 		levelProofVec: []*LevelProof{},
 	}
-    restIsHash := false
+
 	// search in the memtable
-	memTableResults, memTableProof := vl.memTable.GenerateRangeProof(startKey, endKey)
-	if len(memTableResults) > 0 {
-		leftMostResult := memTableResults[0]
-		if leftMostResult.Key <= startKey {
-			restIsHash = true
+	memTableID := vl.memTable.GetComponentID()
+	var memTableResults []util.KeyValue
+	var memTableProofOrHash MemTableProofOrHash
+	if componentIDSet[memTableID] {
+		var memTableProof memtable.RangeProof
+		memTableResults, memTableProof = vl.memTable.GenerateRangeProof(startKey, endKey)
+		memTableProofOrHash = MemTableProofOrHash{
+			results: memTableResults,
+			proof: memTableProof,
+			hash: util.H256{},
+			isHash: false,
+		}
+	}else{
+		memTableProofOrHash = MemTableProofOrHash{
+			results: memTableResults,
+			proof: memtable.RangeProof{},
+			hash: vl.memTable.GetHash(),
+			isHash: true,
 		}
 	}
-	vlStoreProof.memTableProofVec = append(vlStoreProof.memTableProofVec, &MemTableProofOrHash{
-		results: memTableResults,
-		proof: memTableProof,
-		hash: util.H256{},
-		isHash: false,
-	})
+	vlStoreProof.memTableProofVec = append(vlStoreProof.memTableProofVec, &memTableProofOrHash)
 
 
 	// search in the immutable memtable vector
 	for _, mt := range vl.immutableMemTableVec {
-		if restIsHash {
-			hash := mt.GetHash()
-			vlStoreProof.memTableProofVec = append(vlStoreProof.memTableProofVec, &MemTableProofOrHash{
-				results: nil,
-				proof: memtable.RangeProof{},
-				hash: hash,
-				isHash: true,
-			})
-		}else{
-			memTableResults, memTableProof := mt.GenerateRangeProof(startKey, endKey)
-			if len(memTableResults) > 0 {
-				leftMostResult := memTableResults[0]
-				if leftMostResult.Key <= startKey {
-					restIsHash = true
-				}
-			}
-			vlStoreProof.memTableProofVec = append(vlStoreProof.memTableProofVec, &MemTableProofOrHash{
-				results: memTableResults,
-				proof: memTableProof,
+		immutableMemTableID := mt.GetComponentID()
+		var immutableMemTableResults []util.KeyValue
+		var immutableMemTableProofOrHash MemTableProofOrHash
+		if componentIDSet[immutableMemTableID] {
+			immutableMemTableResults, immutableMemTableProof := mt.GenerateRangeProof(startKey, endKey)
+			immutableMemTableProofOrHash = MemTableProofOrHash{
+				results: immutableMemTableResults,
+				proof: immutableMemTableProof,
 				hash: util.H256{},
 				isHash: false,
-			})
-		}	
+			}
+		}else{
+			immutableMemTableProofOrHash = MemTableProofOrHash{
+				results: immutableMemTableResults,
+				proof: memtable.RangeProof{},
+				hash: mt.GetHash(),
+				isHash: true,
+			}
+		}
+		vlStoreProof.memTableProofVec = append(vlStoreProof.memTableProofVec, &immutableMemTableProofOrHash)
 	}
 
 	// search in the disk-level
 	for _, level := range vl.levelVec {
 		levelProof := &LevelProof{
-			runProofVec: []*LevelRunProofOrHash{},
+			runProofOrHashVec: []*LevelRunProofOrHash{},
 		}
 		for _, levelRun := range level.RunVec {
-			if restIsHash {
-				hash := levelRun.Digest
-				levelProof.runProofVec = append(levelProof.runProofVec, &LevelRunProofOrHash{
-					results: nil,
-					proof: run.RunProof{},
-					hash: hash,
-					isHash: true,
-				})
-			}else{
-				runResults, runProof := levelRun.ProveRange(startKey, endKey, vl.configs)
-				
-				// 打印runResults 中的key
-				fmt.Println("runResults :")
-				for _, kv := range runResults {
-					fmt.Print(kv.Key, " ")
-				}
-				fmt.Println()
-
-				if len(runResults) > 0 {
-					leftMostResult := runResults[0]
-					if leftMostResult.Key <= startKey {
-						restIsHash = true
-					}
-				}
-				levelProof.runProofVec = append(levelProof.runProofVec, &LevelRunProofOrHash{
-					results: runResults,
-					proof: *runProof,
+			levelRunID := levelRun.ComponentID
+			//fmt.Println("levelRunID :", levelRunID)
+			var levelRunResults []util.KeyValue
+			var levelRunProofOrHash LevelRunProofOrHash
+			if componentIDSet[levelRunID] {
+				levelRunResults, levelRunProof := levelRun.ProveRange(startKey, endKey, vl.configs)
+				levelRunProofOrHash = LevelRunProofOrHash{
+					results: levelRunResults,
+					proof: *levelRunProof,
 					hash: util.H256{},
 					isHash: false,
-				})
-			}
+				}
+			}else{
+				levelRunProofOrHash = LevelRunProofOrHash{
+					results: levelRunResults,
+					proof: run.RunProof{},
+					hash: levelRun.Digest,
+					isHash: true,
+				}
+			}	
+			levelProof.runProofOrHashVec = append(levelProof.runProofOrHashVec, &levelRunProofOrHash)
 		}
 		vlStoreProof.levelProofVec = append(vlStoreProof.levelProofVec, levelProof)
 	}
@@ -291,107 +363,84 @@ func (vl *VLStore) ComputeDigest() util.H256 {
 }
 
 func (vl *VLStore) VerifyAndCollectResult(startKey util.Key, endKey util.Key, proof *VLStoreProof, rootHash util.H256, fanout int) (bool, []util.KeyValue) {
-	levelRoots := make([]util.H256, 0)
+	componentDigestVec := make([]util.H256, 0)
 
 	// first reconstruct the memtable_proof
-	memTableResult := proof.memTableProofVec[0].results
+	memTableProofOrHash := proof.memTableProofVec[0]
+	memTableResult := memTableProofOrHash.results
 
-	// 打印memTableResult 中的key
-	fmt.Println("memTable :")
-	for _, kv := range memTableResult {
-		fmt.Print(kv.Key, " ")
+	// // 打印memTableResult 中的key
+	// fmt.Println("memTable :")
+	// for _, kv := range memTableResult {
+	// 	fmt.Print(kv.Key, " ")
+	// }
+	// fmt.Println()
+
+	var memTableDigest util.H256
+	if memTableProofOrHash.isHash {
+		memTableDigest = memTableProofOrHash.hash
+	}else{
+		memTableDigest = memtable.ReconstructRangeProof(startKey, endKey, memTableResult, memTableProofOrHash.proof)
 	}
-	fmt.Println()
-
-	h := memtable.ReconstructRangeProof(startKey, endKey, memTableResult, proof.memTableProofVec[0].proof)
-	levelRoots = append(levelRoots, h)
-
-	
-
+	componentDigestVec = append(componentDigestVec, memTableDigest)
 
 
 	mergeResult := make([]util.KeyValue, 0)
-	restIsHash := false
-
-	if len(memTableResult) > 0 {
-		leftMostResult := memTableResult[0]
-		if leftMostResult.Key <= startKey{
-			restIsHash = true
-		}
-		mergeResult = append(mergeResult, memTableResult...)
-	}
+	mergeResult = append(mergeResult, memTableResult...)
 
 	// reconstruct the immutable memtable_proof
 	for i := 1; i < len(proof.memTableProofVec); i++ {
-		memTableProof := proof.memTableProofVec[i]
-		memTableResult := memTableProof.results
+		immutableMemTableProofOrHash := proof.memTableProofVec[i]
+		immutableMemTableResult := immutableMemTableProofOrHash.results
 
-		// 打印memTableResult 中的key
-		fmt.Println("immutable memTable :", i)
-		for _, kv := range memTableResult {
-			fmt.Print(kv.Key, " ")
-		}
-		fmt.Println()
+		// // 打印memTableResult 中的key
+		// fmt.Println("immutable memTable :", i)
+		// for _, kv := range immutableMemTableResult {
+		// 	fmt.Print(kv.Key, " ")
+		// }
+		// fmt.Println()
 
-		if memTableProof.isHash {
-			if !restIsHash {
-				return false, nil
-			}
-			levelRoots = append(levelRoots, memTableProof.hash)
+		var immutableMemTableDigest util.H256
+		if immutableMemTableProofOrHash.isHash {
+			immutableMemTableDigest = immutableMemTableProofOrHash.hash
 		}else{
-			if restIsHash {
-				return false, nil
-			}
-			h := memtable.ReconstructRangeProof(startKey, endKey, memTableResult, memTableProof.proof)
-			levelRoots = append(levelRoots, h)		
+			immutableMemTableDigest = memtable.ReconstructRangeProof(startKey, endKey, immutableMemTableResult, immutableMemTableProofOrHash.proof)
 		}
-
-		if len(memTableResult) > 0 {
-			leftMostResult := memTableResult[0]
-			if leftMostResult.Key <= endKey {
-				restIsHash = true
-			}
-			mergeResult = append(mergeResult, memTableResult...)
-		}
-
+		componentDigestVec = append(componentDigestVec, immutableMemTableDigest)
+		mergeResult = append(mergeResult, immutableMemTableResult...)
 	}
 
 	// reconstruct the level_proof
 	for _, levelProof := range proof.levelProofVec {
-		levelHashVec := make([]util.H256, 0)
-		for i, levelRunProof := range levelProof.runProofVec {
-			runResults, runProof := levelRunProof.results, levelRunProof.proof
-			// 打印runResults 中的key
-			fmt.Println("run :", i)
-			for _, kv := range runResults {
-				fmt.Print(kv.Key, " ")
-			}
-			fmt.Println()
-			if levelRunProof.isHash {
-				if !restIsHash {
-					return false, nil
-				}
-				levelHashVec = append(levelHashVec, levelRunProof.hash)
+		runDigestVec := make([]util.H256, 0)
+		for _, levelRunProofOrHash := range levelProof.runProofOrHashVec {
+			levelRunResults := levelRunProofOrHash.results
+			// // 打印levelRunResults 中的key
+			// fmt.Println("levelRun :")
+			// fmt.Println(levelRunProofOrHash.isHash)
+			// for _, kv := range levelRunResults {
+			// 	fmt.Print(kv.Key, " ")
+			// }
+			// fmt.Println()
+
+			var levelRunDigest util.H256
+			if levelRunProofOrHash.isHash {
+				levelRunDigest = levelRunProofOrHash.hash
 			}else{
-				if restIsHash {
-					return false, nil
-				}
-				_, h := run.ReconstructRunProof(startKey, endKey, runResults, &runProof, fanout)
-				levelHashVec = append(levelHashVec, h)
+				_, levelRunDigest = run.ReconstructRunProof(startKey, endKey, levelRunResults, &levelRunProofOrHash.proof, fanout)
+				//fmt.Println("levelRunDigest :", levelRunDigest)
 			}
-			if len(runResults) > 0 {
-				leftMostResult := runResults[0]
-				if leftMostResult.Key <= endKey {
-					restIsHash = true
-				}
-				mergeResult = append(mergeResult, runResults...)
-			}
+			runDigestVec = append(runDigestVec, levelRunDigest)
+			mergeResult = append(mergeResult, levelRunResults...)
 		}
-		levelH := util.NewBlake3Hasher().ComputeConcatHash(levelHashVec)
-		levelRoots = append(levelRoots, levelH)
+		levelDigest := util.NewBlake3Hasher().ComputeConcatHash(runDigestVec)
+		componentDigestVec = append(componentDigestVec, levelDigest)
 	}
-	reconstructRootHash := util.NewBlake3Hasher().ComputeConcatHash(levelRoots)
+
+	reconstructRootHash := util.NewBlake3Hasher().ComputeConcatHash(componentDigestVec)
 	if reconstructRootHash != rootHash {
+		fmt.Println("reconstructRootHash :", reconstructRootHash)
+		fmt.Println("rootHash :", rootHash)
 		return false, nil
 	}
 	// sort the mergeResult by the key
@@ -427,16 +476,22 @@ func (vl *VLStore) flushMemTable(table *memtable.MBTree) {
 	iter := run.NewInMemKeyValueIterator(keyValues)
 
 	// Construct a new run by the key-values
-	runID := vl.newRunID()
+	componentID := table.GetComponentID()
 	levelID := 0 // the first on-disk level id is 0
 	levelNumOfRuns := 0
 	if levelID < len(vl.levelVec) && vl.levelVec[levelID] != nil {
 		levelNumOfRuns = len(vl.levelVec[levelID].RunVec)
 	}
-	levelRun, err := run.ConstructRunByInMemoryTree(iter, runID, levelID, vl.configs.DirName, vl.configs.Epsilon, vl.configs.Fanout, vl.configs.MaxNumOfStatesInARun(levelID), levelNumOfRuns, vl.configs.SizeRatio)
+	levelRun, err := run.ConstructRunByInMemoryTree(iter, componentID, levelID, vl.configs.DirName, vl.configs.Epsilon, vl.configs.Fanout, vl.configs.MaxNumOfStatesInARun(levelID), levelNumOfRuns, vl.configs.SizeRatio)
 	if err != nil {
 		panic(err)
 	}
+
+	// update the component_meta_map
+	componentMeta := vl.componentMetaMap[componentID]
+	componentMeta.Digest = levelRun.Digest
+	vl.componentMetaMap[componentID] = componentMeta
+	
 
 	// Insert the run into the disk-level
 	var level *run.Level = nil

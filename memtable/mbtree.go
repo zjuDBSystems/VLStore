@@ -7,6 +7,7 @@ import (
 )
 
 type MBTree struct {
+	componentID int
 	root   node
 	keyNum int
 	fanout int
@@ -15,7 +16,14 @@ type MBTree struct {
 	hasher util.Hasher
 }
 
+func (t *MBTree) GetComponentID() int {
+	return t.componentID
+}
+
 func (t *MBTree) GetHash() util.H256 {
+	if t.root == nil {
+		return util.H256{}
+	}
 	return t.root.GetHash()
 }
 
@@ -23,8 +31,9 @@ func (t *MBTree) KeyNum() int {
 	return t.keyNum
 }
 
-func NewBPlusTree(fanout int) *MBTree {
+func NewBPlusTree(componentID int, fanout int) *MBTree {
 	return &MBTree{
+		componentID: componentID,
 		root:   nil,
 		keyNum: 0,
 		fanout: fanout,

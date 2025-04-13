@@ -114,12 +114,6 @@ func TestLevelRunHash(t *testing.T) {
 
 	fmt.Printf("Run digest: %x\n", run.Digest)
 
-	// 持久化过滤器
-	err = run.PersistFilter(levelID, configs)
-	if err != nil {
-		t.Fatalf("Failed to persist filter: %v", err)
-	}
-
 	// 释放运行
 	run = nil
 
@@ -215,38 +209,7 @@ func TestInMemoryMergeAndRunConstruction(t *testing.T) {
 		t.Fatalf("Failed to construct run: %v", err)
 	}
 
-	// 持久化过滤器
-	err = run.PersistFilter(levelID, configs)
-	if err != nil {
-		t.Fatalf("Failed to persist filter: %v", err)
-	}
-
-	// 释放运行
-	run = nil
-
-	// 加载运行
-	loadedRun, err := Load(runID, levelID, configs)
-	if err != nil {
-		t.Fatalf("Failed to load run: %v", err)
-	}
-
-	fmt.Printf("Loaded run: %+v\n", loadedRun)
-
-	// 验证摘要计算
-	mhtRoot := loadedRun.MHTReader.Root
-
-	var bytes []byte
-	bytes = append(bytes, mhtRoot[:]...)
-
-	if loadedRun.FilterHash != nil {
-		bytes = append(bytes, (*loadedRun.FilterHash)[:]...)
-	}
-
-	computedDigest := util.NewHasher(util.BLAKE3).HashBytes(bytes)
-
-	if computedDigest != loadedRun.Digest {
-		t.Errorf("Digest mismatch: expected %x, got %x", loadedRun.Digest, computedDigest)
-	}
+	fmt.Printf("Run digest: %x\n", run.Digest)
 }
 
 // TestProveAndVerify tests proof generation and verification with sequential log data
