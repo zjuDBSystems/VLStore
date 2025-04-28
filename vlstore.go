@@ -10,6 +10,7 @@ import (
 	"sort"
 	"sync"
 	"sync/atomic"
+	"time"
 )
 type ComponentMeta struct {
     MinKey util.Key
@@ -256,6 +257,7 @@ func (vl *VLStore) SearchWithProof(startKey util.Key, endKey util.Key) *VLStoreP
 	}
 
 	// search in the memtable
+	memTableStart := time.Now()
 	memTableID := vl.memTable.GetComponentID()
 	var memTableResults []util.KeyValue
 	var memTableProofOrHash MemTableProofOrHash
@@ -277,10 +279,12 @@ func (vl *VLStore) SearchWithProof(startKey util.Key, endKey util.Key) *VLStoreP
 		}
 	}
 	vlStoreProof.memTableProofVec = append(vlStoreProof.memTableProofVec, &memTableProofOrHash)
-
+	fmt.Printf("MemTable search time: %v, found %d results\n", 
+        time.Since(memTableStart), len(memTableResults))
 
 	// search in the immutable memtable vector
 	for _, mt := range vl.immutableMemTableVec {
+		immutableMemTableStart := time.Now()
 		immutableMemTableID := mt.GetComponentID()
 		var immutableMemTableResults []util.KeyValue
 		var immutableMemTableProofOrHash MemTableProofOrHash
@@ -301,6 +305,8 @@ func (vl *VLStore) SearchWithProof(startKey util.Key, endKey util.Key) *VLStoreP
 			}
 		}
 		vlStoreProof.memTableProofVec = append(vlStoreProof.memTableProofVec, &immutableMemTableProofOrHash)
+		fmt.Printf("ImmutableMemTable search time: %v, found %d results\n", 
+        time.Since(immutableMemTableStart), len(immutableMemTableResults))
 	}
 
 	// search in the disk-level
@@ -309,12 +315,14 @@ func (vl *VLStore) SearchWithProof(startKey util.Key, endKey util.Key) *VLStoreP
 			runProofOrHashVec: []*LevelRunProofOrHash{},
 		}
 		for _, levelRun := range level.RunVec {
+			levelRunStart := time.Now()
 			levelRunID := levelRun.ComponentID
 			//fmt.Println("levelRunID :", levelRunID)
 			var levelRunResults []util.KeyValue
 			var levelRunProofOrHash LevelRunProofOrHash
 			if componentIDSet[levelRunID] {
-				levelRunResults, levelRunProof := levelRun.ProveRange(startKey, endKey, vl.configs)
+				var levelRunProof *run.RunProof
+				levelRunResults, levelRunProof = levelRun.ProveRange(startKey, endKey, vl.configs)
 				levelRunProofOrHash = LevelRunProofOrHash{
 					results: levelRunResults,
 					proof: *levelRunProof,
@@ -330,10 +338,11 @@ func (vl *VLStore) SearchWithProof(startKey util.Key, endKey util.Key) *VLStoreP
 				}
 			}	
 			levelProof.runProofOrHashVec = append(levelProof.runProofOrHashVec, &levelRunProofOrHash)
+			fmt.Printf("LevelRun search time: %v, found %d results\n", 
+        time.Since(levelRunStart), len(levelRunResults))
 		}
 		vlStoreProof.levelProofVec = append(vlStoreProof.levelProofVec, levelProof)
 	}
-
 	return vlStoreProof
 }
 

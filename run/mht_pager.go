@@ -2,10 +2,10 @@ package run
 
 import (
 	"VLStore/util"
+	"fmt"
 	"math"
 	"os"
 	"slices"
-	"fmt"
 )
 
 /*
@@ -154,8 +154,9 @@ A helper to read hash from the file
 A LRU cache is used to optimize the read performance.
 */
 type HashPageReader struct {
-	File *os.File  // file object of the corresponding hash file
-	Root util.H256 // cache of the root hash of the MHT
+	File      *os.File  // file object of the corresponding hash file
+	Root      util.H256 // cache of the root hash of the MHT
+	PageReads int       // 统计页面读取次数
 }
 
 /*
@@ -198,6 +199,7 @@ func LoadHashPageReader(fileName string) (*HashPageReader, error) {
 Load the deserialized vector of the page from the file at given page_id
 */
 func (r *HashPageReader) ReadPageAt(pageId int) ([]util.H256, error) {
+	r.PageReads++
 	//  load the page from the file
 	offset := int64(pageId * PAGE_SIZE)
 	bytes := make([]byte, PAGE_SIZE)
@@ -257,7 +259,7 @@ func (r *HashPageReader) proveNonLeaf(left int, right int, numOfData int, fanout
 			v = v[leftSlicePos : rightSlicePos+1]
 			//fmt.Println("v: ", v)
 			// remove the proving hashes from index level_l - proof_pos_l to level_r - proof_pos_l
-			v = slices.Delete(v, levelL - (proofPosL - startIdx), levelR - (proofPosL - startIdx) + 1)
+			v = slices.Delete(v, levelL-(proofPosL-startIdx), levelR-(proofPosL-startIdx)+1)
 			//fmt.Println("levelL - (proofPosL - startIdx): ", levelL - (proofPosL - startIdx))
 			//fmt.Println("levelR - (proofPosL - startIdx): ", levelR - (proofPosL - startIdx))
 			//fmt.Println("v: ", v)
@@ -276,7 +278,7 @@ A MHT constructor that generates and appends hashes to the file in a streaming f
 */
 type StreamMHTConstructor struct {
 	OutputMHTWriter *HashPageWriter // the writer of output MHT file
-	Fanout          int            // the fanout of the MHT
+	Fanout          int             // the fanout of the MHT
 	CacheVector     []util.H256     // a cache that keep a vector of at most fanout hash values of the level to compute the upper level's hash
 	NumOfHash       int             // the total number of hashes in the file
 	CntInLevel      int             // a counter for the focused level
@@ -461,7 +463,7 @@ func ReconstructRangeProof(proof *RangeProof, fanout int, objHashes []util.H256,
 			insertedHashes = append(insertedHashes, h)
 		}
 
-		for i:= 0; i < len(indexList); i++ {
+		for i := 0; i < len(indexList); i++ {
 			indexList[i] /= fanout
 		}
 

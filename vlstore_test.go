@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
-	"syscall"
+	"runtime/pprof"
 	"testing"
 	"time"
 )
@@ -138,7 +138,6 @@ func TestVLStoreWriteThroughput(t *testing.T) {
 		//{"小数据量", 4, 23, 1000, 2, 1000},
 		//{"小数据量", 4, 23, 1000, 2, 5000},
 		//{"小数据量", 4, 23, 1000, 2, 8000},
-		//{"中数据量", 4, 23, 1000, 2, 10000},
 		//{"中数据量", 4, 23, 1000, 2, 10000},
 		//{"大数据量", 4, 23, 1000, 2, 50000},
 		{"大数据量", 4, 4, 64000, 2, 1000000},
@@ -353,7 +352,7 @@ func TestVLStoreRangeQueryPerformance(t *testing.T) {
 	store := NewVLStore(configs)
 
 	// 数据量
-	numEntries := 100000
+	numEntries := 1000000
 	valueSize := 1024
 	// 生成顺序键值对
 	keyValues := generateSequentialKeyValues(numEntries, valueSize)
@@ -365,26 +364,39 @@ func TestVLStoreRangeQueryPerformance(t *testing.T) {
 
 	time.Sleep(5 * time.Second)
 	// 测试不同范围大小的查询
-	rangeSizes := []int{1, 10, 100, 500, 800, 1000, 3000, 5000, 8000, 10000}
-	numQueries := 100 // 每个范围大小执行的查询次数
+	rangeSizes := []int{1, 10, 100, 1000, 10000}
+	//rangeSizes := []int{1000}
+	numQueries := 10 // 每个范围大小执行的查询次数
+
+	// CPU profile
+	f, err := os.Create("cpu.prof")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+
+	if err := pprof.StartCPUProfile(f); err != nil {
+		t.Fatal(err)
+	}
+	defer pprof.StopCPUProfile()
 
 	for _, rangeSize := range rangeSizes {
 		t.Run(fmt.Sprintf("RangeSize_%d", rangeSize), func(t *testing.T) {
 			var totalLatency time.Duration
 			//var totalProofSize float64
-			startCPU := getCPUSample()
 
 			// 执行多次查询并测量
 			for i := 0; i < numQueries; i++ {
 				// 随机选择一个范围起点，确保不超出数据范围
 				startKey := util.Key(rand.Intn(numEntries - rangeSize))
 				endKey := startKey + util.Key(rangeSize)
-				
 
 				//fmt.Println("startKey", startKey, "endKey", endKey)
 				// 测量单次查询延迟和单次proof的size
 				queryStart := time.Now()
+				fmt.Println("search ", i)
 				store.SearchWithProof(startKey, endKey)
+				fmt.Println()
 				store.ComputeDigest()
 				//proof := store.SearchWithProof(startKey, endKey)
 				//rootHash := store.ComputeDigest()
@@ -397,41 +409,11 @@ func TestVLStoreRangeQueryPerformance(t *testing.T) {
 				//totalProofSize += float64(proofSize)
 			}
 
-			endCPU := getCPUSample()
-			cpuUsage := calculateCPUUsage(startCPU, endCPU)
-
 			avgLatency := totalLatency / time.Duration(numQueries)
 			//avgProofSize := totalProofSize / float64(numQueries)
-			t.Logf("范围大小: %d, 平均查询延迟: %v, 平均CPU使用率: %.2f%%",
-				rangeSize, avgLatency, cpuUsage)
+			t.Logf("范围大小: %d, 平均查询延迟: %v",
+				rangeSize, avgLatency)
 		})
 	}
 }
 
-// 获取CPU使用样本
-func getCPUSample() time.Time {
-	// 简单实现，使用时间作为CPU采样点
-	return time.Now()
-}
-
-// 计算CPU使用率
-func calculateCPUUsage(start, end time.Time) float64 {
-	// 在生产环境中，应该使用runtime/pprof或其他工具获取实际CPU使用率
-	// 这里仅为示例，返回一个模拟值
-	elapsed := end.Sub(start).Seconds()
-
-	// 使用runtime包获取CPU使用情况
-	var rusage syscall.Rusage
-	syscall.Getrusage(syscall.RUSAGE_SELF, &rusage)
-
-	// 用户态CPU时间 + 系统态CPU时间（秒）
-	userTime := time.Duration(rusage.Utime.Sec)*time.Second +
-		time.Duration(rusage.Utime.Usec)*time.Microsecond
-	sysTime := time.Duration(rusage.Stime.Sec)*time.Second +
-		time.Duration(rusage.Stime.Usec)*time.Microsecond
-
-	totalCPUTime := userTime + sysTime
-	cpuUsage := float64(totalCPUTime) / float64(time.Duration(elapsed)*time.Second) * 100
-
-	return cpuUsage
-}

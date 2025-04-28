@@ -150,6 +150,7 @@ func (m *ModelPageWriter) ToModelReader() *ModelPageReader {
 type ModelPageReader struct {
 	File           *os.File // file object of the corresponding index file
 	NumStoredPages int      // records the number of pages that are stored in the file
+	PageReads      int      // 统计页面读取次数
 }
 
 /*
@@ -178,6 +179,7 @@ func LoadModelPageReader(fileName string) (*ModelPageReader, error) {
 /* Load the deserialized vector of the page from the file at given page_id
  */
 func (m *ModelPageReader) ReadDeserPageAt(pageID int) (*ModelCollections, error) {
+	m.PageReads++
 	// 直接从文件加载页面
 	offset := pageID * PAGE_SIZE
 	bytes := make([]byte, PAGE_SIZE)
@@ -260,7 +262,7 @@ func (m *ModelPageReader) QueryModel(pageIDLb int, pageIDUb int, searchKey util.
 type StreamModelConstructor struct {
 	OutputModelWriter         *ModelPageWriter     // a writer of the output model file
 	LowestLevelModelGenerator *util.ModelGenerator // a model generator of the lowest level (learn input is the states)
-	Epsilon                   int               // an upper-bound model prediction error
+	Epsilon                   int                  // an upper-bound model prediction error
 	StatePos                  int                  // the position of the input state
 }
 

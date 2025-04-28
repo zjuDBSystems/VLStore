@@ -188,6 +188,7 @@ A helper to read key-value from the file
 type ValuePageReader struct {
 	File         *os.File // file object of the corresponding value file
 	NumKeyValues int      // the number of key-values in the file
+	PageReads    int      // 统计页面读取次数
 }
 
 /*
@@ -233,6 +234,7 @@ func LoadValuePageReader(fileName string) (*ValuePageReader, error) {
 /* Load the deserialized vector of the page from the file at given page_id
  */
 func (r *ValuePageReader) ReadPageAt(pageID int) []util.KeyValue {
+	r.PageReads++
 	// cache does not contain the page, should load the page from the file
 	offset := int64(pageID * PAGE_SIZE)
 	bytes := make([]byte, PAGE_SIZE)
