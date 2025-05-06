@@ -8,7 +8,8 @@ import (
 const (
 	PAGE_SIZE             = 4096
 	MAX_NUM_HASH_IN_PAGE  = PAGE_SIZE/util.H256_SIZE - 1 // dedeuction of one is because we need to store some meta-data (i.e., num_of_hash) in the page
-	MAX_NUM_MODEL_IN_PAGE = PAGE_SIZE / util.Model_SIZE  // dedeuction of one is because we need to store some meta-data (i.e., num_of_model) in the page
+	MAX_NUM_MODEL_IN_PAGE = PAGE_SIZE / util.Model_SIZE - 1  // dedeuction of one is because we need to store some meta-data (i.e., num_of_model) in the page
+	MAX_NUM_KEY_POS_IN_PAGE = PAGE_SIZE / util.KEY_POS_SIZE - 1 // dedeuction of one is because we need to store some meta-data (i.e., num_of_key_pos) in the page
 )
 
 /* Structure of the page with default 4096 byte
@@ -28,6 +29,68 @@ func NewPage() *Page {
 func NewPageFromArray(data [PAGE_SIZE]byte) *Page {
 	return &Page{Data: data}
 }
+
+/*
+Write key-offset vector to the page
+4 bytes num of key | (8 bytes key, 4 bytes value offset) for each key-value
+*/
+func NewPageFromKeyPosVector(keyPos []KeyPos) *Page {
+	// check the length of the vector is inside the maximum number in page
+	if len(keyPos) > MAX_NUM_KEY_POS_IN_PAGE {
+		panic("key-pos vector size is larger than page size")
+	}
+
+	p := NewPage()
+
+	// write the number of key in the front of the page
+	numOfKeys := uint32(len(keyPos))
+	binary.BigEndian.PutUint32(p.Data[0:4], numOfKeys)
+
+	// iteratively write each key-offset to the page
+	offset := 4
+	for i := uint32(0); i < numOfKeys; i++ {
+		// key (8 bytes)
+		binary.BigEndian.PutUint64(p.Data[offset:offset+8], uint64(keyPos[i].Key))
+		// value offset (16 bytes)
+		binary.BigEndian.PutUint32(p.Data[offset+8:offset+12], keyPos[i].Pos.BlockNumber)
+		binary.BigEndian.PutUint64(p.Data[offset+12:offset+20], keyPos[i].Pos.ChunkOffset)
+		binary.BigEndian.PutUint32(p.Data[offset+20:offset+24], keyPos[i].Pos.ChunkSize)
+		offset += util.KEY_POS_SIZE
+	}
+
+	return p
+}
+
+/*
+Read the key-offsets from a page
+*/
+func (p *Page) ToKeyPosVector() []KeyPos {
+	keyPoss := make([]KeyPos, 0)
+
+	// deserialize the number of key in the page
+	numOfKeys := binary.BigEndian.Uint32(p.Data[0:4])
+
+	// deserialize each of the key-offset from the page
+	offset := 4
+	for i := uint32(0); i < numOfKeys; i++ {
+		if offset+util.KEY_POS_SIZE > PAGE_SIZE {
+			panic("exceed page size")
+		}
+
+		// key (8 bytes)
+		key := util.Key(binary.BigEndian.Uint64(p.Data[offset : offset+8]))
+		// value postion (16 bytes)
+		blockNumber := binary.BigEndian.Uint32(p.Data[offset+8 : offset+12])
+		chunkOffset := binary.BigEndian.Uint64(p.Data[offset+12 : offset+20])
+		chunkSize := binary.BigEndian.Uint32(p.Data[offset+20 : offset+24])
+		keyPos := KeyPos{Key: key, Pos: &ChunkPosition{BlockNumber: blockNumber, ChunkOffset: chunkOffset, ChunkSize: chunkSize}}
+		keyPoss = append(keyPoss, keyPos)
+		offset += util.KEY_POS_SIZE
+	}
+
+	return keyPoss
+}
+
 
 /*
 Write value vector to the page

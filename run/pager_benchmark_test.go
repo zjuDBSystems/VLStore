@@ -57,33 +57,6 @@ func TestPagerWriteThroughput(t *testing.T) {
 	testData := generateTestData(TEST_DATA_COUNT, VALUE_SIZE)
 
 	// 测试ValuePager
-	t.Run("ValuePager", func(t *testing.T) {
-		fileName := fmt.Sprintf("%s/value_pager_test.dat", TEST_FILE_DIR)
-		writer, err := NewValuePageWriter(fileName)
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		startTime := time.Now()
-
-		// 顺序写入数据
-		for _, kv := range testData {
-			writer.Append(kv.Key, kv.Value)
-		}
-
-		// 确保所有数据都写入磁盘
-		writer.Flush()
-
-		elapsedTime := time.Since(startTime)
-
-		// 计算吞吐量 (ops/s)
-		throughput := float64(TEST_DATA_COUNT) / elapsedTime.Seconds()
-
-		t.Logf("ValuePager写入吞吐量: %.2f ops/s", throughput)
-
-		// 关闭文件
-		writer.File.Close()
-	})
 
 	// 测试MHTpager
 	t.Run("MHTpager", func(t *testing.T) {

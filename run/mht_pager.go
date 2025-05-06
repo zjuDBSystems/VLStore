@@ -36,8 +36,7 @@ func NewHashPageWriter(fileName string) (*HashPageWriter, error) {
 
 /*
 Load the writer from a given file.
-
-	num_stored_pages are derived from the file
+num_stored_pages are derived from the file
 */
 func LoadHashPageWriter(fileName string) (*HashPageWriter, error) {
 	file, err := os.OpenFile(fileName, os.O_CREATE|os.O_RDWR, 0666)

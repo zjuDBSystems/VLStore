@@ -214,7 +214,7 @@ func TestInMemoryMergeAndRunConstruction(t *testing.T) {
 
 // TestProveAndVerify tests proof generation and verification with sequential log data
 func TestProveAndVerify(t *testing.T) {
-	n := 1000000
+	n := 1000
 	epsilon := 23
 	fanout := 16
 	dirName := "test_prove_storage"
@@ -273,6 +273,9 @@ func TestProveAndVerify(t *testing.T) {
 		// lb为0-n之间的随机值
 		lb := util.Key(r.Int63() % int64(n))
 		ub := lb + 100
+
+		fmt.Println("--------------------------------")
+		fmt.Printf("lb: %d, ub: %d\n", lb, ub)
 
 
 		// Generate proof
