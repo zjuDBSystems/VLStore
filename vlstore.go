@@ -12,10 +12,11 @@ import (
 	"sync/atomic"
 	//"time"
 )
+
 type ComponentMeta struct {
-    MinKey util.Key
-    MaxKey util.Key
-    Digest util.H256
+	MinKey util.Key
+	MaxKey util.Key
+	Digest util.H256
 }
 
 func newComponentMeta(minKey util.Key, maxKey util.Key, digest util.H256) *ComponentMeta {
@@ -37,11 +38,11 @@ type VLStore struct {
 	configs                    *util.Configs
 	memTable                   *memtable.MBTree
 	mu                         sync.RWMutex
-	immutableMemTableVec       []*memtable.MBTree    	// immutable memtables, waiting to be flushed to disk
+	immutableMemTableVec       []*memtable.MBTree // immutable memtables, waiting to be flushed to disk
 	immutableMemTableVecLock   sync.RWMutex
-	flushImmutableMemTableChan chan *memtable.MBTree 	// channel to notify the flush goroutine to flush immutable memtable to disk
+	flushImmutableMemTableChan chan *memtable.MBTree // channel to notify the flush goroutine to flush immutable memtable to disk
 	levelVec                   []*run.Level
-	componentIDCnt             atomic.Int64 			// this helps to generate a component_id
+	componentIDCnt             atomic.Int64 // this helps to generate a component_id
 	componentMetaMap           map[int]*ComponentMeta
 	cacheManager               *run.CacheManager
 }
@@ -50,7 +51,7 @@ type VLStore struct {
 func NewVLStore(configs *util.Configs) *VLStore {
 	vl := &VLStore{
 		configs:                    configs,
-		immutableMemTableVec:          []*memtable.MBTree{},
+		immutableMemTableVec:       []*memtable.MBTree{},
 		flushImmutableMemTableChan: make(chan *memtable.MBTree),
 		levelVec:                   []*run.Level{},
 		componentIDCnt:             atomic.Int64{},
@@ -118,7 +119,6 @@ func (vl *VLStore) Insert(key util.Key, value util.Value) {
 	// directly insert the state into the mem_mht
 	vl.memTable.Insert(key, value)
 
-
 	// update the component_meta_map
 	componentMeta := vl.componentMetaMap[vl.memTable.GetComponentID()]
 
@@ -131,7 +131,6 @@ func (vl *VLStore) Insert(key util.Key, value util.Value) {
 
 	componentMeta.Digest = vl.memTable.GetHash()
 	vl.componentMetaMap[vl.memTable.GetComponentID()] = componentMeta
-	
 
 	// check if the memtable is full and need to be flushed to disk
 	inMemThreshold := vl.configs.BaseStateNum
@@ -195,10 +194,8 @@ func (vl *VLStore) Search(key util.Key) util.Value {
 	return nil
 }
 
-
-
 // 返回和查询范围有重叠的组件的component_id
-func (vl *VLStore) SearchRangeFromComponentMeta(startKey util.Key, endKey util.Key) map[int]bool{
+func (vl *VLStore) SearchRangeFromComponentMeta(startKey util.Key, endKey util.Key) map[int]bool {
 	componentIDSet := make(map[int]bool)
 
 	// 遍历所有组件的元数据
@@ -207,7 +204,7 @@ func (vl *VLStore) SearchRangeFromComponentMeta(startKey util.Key, endKey util.K
 		// 检查组件的键范围是否与查询范围有重叠
 		if !(meta.MaxKey < startKey || meta.MinKey > endKey) {
 			componentIDSet[componentID] = true
-		}else{
+		} else {
 			componentIDSet[componentID] = false
 		}
 	}
@@ -218,23 +215,22 @@ func (vl *VLStore) SearchRangeFromComponentMeta(startKey util.Key, endKey util.K
 	// 	fmt.Print(componentID, " : ", componentIDSet[componentID], ", ")
 	// }
 	// fmt.Println()
-	
+
 	return componentIDSet
 }
 
-
 type MemTableProofOrHash struct {
 	results []util.KeyValue
-	proof memtable.RangeProof
-	hash util.H256
-	isHash bool
+	proof   memtable.RangeProof
+	hash    util.H256
+	isHash  bool
 }
 
 type LevelRunProofOrHash struct {
 	results []util.KeyValue
-	proof run.RunProof
-	hash util.H256
-	isHash bool
+	proof   run.RunProof
+	hash    util.H256
+	isHash  bool
 }
 
 type LevelProof struct {
@@ -242,8 +238,8 @@ type LevelProof struct {
 }
 
 type VLStoreProof struct {
-	memTableProofVec []*MemTableProofOrHash	
-	levelProofVec []*LevelProof
+	memTableProofVec []*MemTableProofOrHash
+	levelProofVec    []*LevelProof
 }
 
 func (vl *VLStore) SearchWithProof(startKey util.Key, endKey util.Key) *VLStoreProof {
@@ -255,7 +251,7 @@ func (vl *VLStore) SearchWithProof(startKey util.Key, endKey util.Key) *VLStoreP
 
 	vlStoreProof := &VLStoreProof{
 		memTableProofVec: []*MemTableProofOrHash{},
-		levelProofVec: []*LevelProof{},
+		levelProofVec:    []*LevelProof{},
 	}
 
 	// search in the memtable
@@ -268,21 +264,21 @@ func (vl *VLStore) SearchWithProof(startKey util.Key, endKey util.Key) *VLStoreP
 		memTableResults, memTableProof = vl.memTable.GenerateRangeProof(startKey, endKey)
 		memTableProofOrHash = MemTableProofOrHash{
 			results: memTableResults,
-			proof: memTableProof,
-			hash: util.H256{},
-			isHash: false,
+			proof:   memTableProof,
+			hash:    util.H256{},
+			isHash:  false,
 		}
-	}else{
+	} else {
 		memTableProofOrHash = MemTableProofOrHash{
 			results: memTableResults,
-			proof: memtable.RangeProof{},
-			hash: vl.memTable.GetHash(),
-			isHash: true,
+			proof:   memtable.RangeProof{},
+			hash:    vl.memTable.GetHash(),
+			isHash:  true,
 		}
 	}
 	vlStoreProof.memTableProofVec = append(vlStoreProof.memTableProofVec, &memTableProofOrHash)
-	//fmt.Printf("MemTable search time: %v, found %d results\n", 
-    //    time.Since(memTableStart), len(memTableResults))
+	//fmt.Printf("MemTable search time: %v, found %d results\n",
+	//    time.Since(memTableStart), len(memTableResults))
 
 	// search in the immutable memtable vector
 	for _, mt := range vl.immutableMemTableVec {
@@ -294,21 +290,21 @@ func (vl *VLStore) SearchWithProof(startKey util.Key, endKey util.Key) *VLStoreP
 			immutableMemTableResults, immutableMemTableProof := mt.GenerateRangeProof(startKey, endKey)
 			immutableMemTableProofOrHash = MemTableProofOrHash{
 				results: immutableMemTableResults,
-				proof: immutableMemTableProof,
-				hash: util.H256{},
-				isHash: false,
+				proof:   immutableMemTableProof,
+				hash:    util.H256{},
+				isHash:  false,
 			}
-		}else{
+		} else {
 			immutableMemTableProofOrHash = MemTableProofOrHash{
 				results: immutableMemTableResults,
-				proof: memtable.RangeProof{},
-				hash: mt.GetHash(),
-				isHash: true,
+				proof:   memtable.RangeProof{},
+				hash:    mt.GetHash(),
+				isHash:  true,
 			}
 		}
 		vlStoreProof.memTableProofVec = append(vlStoreProof.memTableProofVec, &immutableMemTableProofOrHash)
-		//fmt.Printf("ImmutableMemTable search time: %v, found %d results\n", 
-        //time.Since(immutableMemTableStart), len(immutableMemTableResults))
+		//fmt.Printf("ImmutableMemTable search time: %v, found %d results\n",
+		//time.Since(immutableMemTableStart), len(immutableMemTableResults))
 	}
 
 	// search in the disk-level
@@ -327,21 +323,21 @@ func (vl *VLStore) SearchWithProof(startKey util.Key, endKey util.Key) *VLStoreP
 				levelRunResults, levelRunProof = levelRun.ProveRange(startKey, endKey, vl.configs, vl.cacheManager)
 				levelRunProofOrHash = LevelRunProofOrHash{
 					results: levelRunResults,
-					proof: *levelRunProof,
-					hash: util.H256{},
-					isHash: false,
+					proof:   *levelRunProof,
+					hash:    util.H256{},
+					isHash:  false,
 				}
-			}else{
+			} else {
 				levelRunProofOrHash = LevelRunProofOrHash{
 					results: levelRunResults,
-					proof: run.RunProof{},
-					hash: levelRun.Digest,
-					isHash: true,
+					proof:   run.RunProof{},
+					hash:    levelRun.Digest,
+					isHash:  true,
 				}
-			}	
+			}
 			levelProof.runProofOrHashVec = append(levelProof.runProofOrHashVec, &levelRunProofOrHash)
-			//fmt.Printf("LevelRun search time: %v, found %d results\n", 
-        	//	time.Since(levelRunStart), len(levelRunResults))
+			//fmt.Printf("LevelRun search time: %v, found %d results\n",
+			//	time.Since(levelRunStart), len(levelRunResults))
 		}
 		vlStoreProof.levelProofVec = append(vlStoreProof.levelProofVec, levelProof)
 	}
@@ -365,7 +361,7 @@ func (vl *VLStore) ComputeDigest() util.H256 {
 		levelHash := level.ComputeDigest()
 		HashVec = append(HashVec, levelHash)
 	}
-	
+
 	bytes := make([]byte, 0)
 	for _, hash := range HashVec {
 		bytes = append(bytes, hash[:]...)
@@ -390,11 +386,10 @@ func (vl *VLStore) VerifyAndCollectResult(startKey util.Key, endKey util.Key, pr
 	var memTableDigest util.H256
 	if memTableProofOrHash.isHash {
 		memTableDigest = memTableProofOrHash.hash
-	}else{
+	} else {
 		memTableDigest = memtable.ReconstructRangeProof(startKey, endKey, memTableResult, memTableProofOrHash.proof)
 	}
 	componentDigestVec = append(componentDigestVec, memTableDigest)
-
 
 	mergeResult := make([]util.KeyValue, 0)
 	mergeResult = append(mergeResult, memTableResult...)
@@ -414,7 +409,7 @@ func (vl *VLStore) VerifyAndCollectResult(startKey util.Key, endKey util.Key, pr
 		var immutableMemTableDigest util.H256
 		if immutableMemTableProofOrHash.isHash {
 			immutableMemTableDigest = immutableMemTableProofOrHash.hash
-		}else{
+		} else {
 			immutableMemTableDigest = memtable.ReconstructRangeProof(startKey, endKey, immutableMemTableResult, immutableMemTableProofOrHash.proof)
 		}
 		componentDigestVec = append(componentDigestVec, immutableMemTableDigest)
@@ -437,7 +432,7 @@ func (vl *VLStore) VerifyAndCollectResult(startKey util.Key, endKey util.Key, pr
 			var levelRunDigest util.H256
 			if levelRunProofOrHash.isHash {
 				levelRunDigest = levelRunProofOrHash.hash
-			}else{
+			} else {
 				_, levelRunDigest = run.ReconstructRunProof(startKey, endKey, levelRunResults, &levelRunProofOrHash.proof, fanout)
 				//fmt.Println("levelRunDigest :", levelRunDigest)
 			}
@@ -466,14 +461,9 @@ func (vl *VLStore) VerifyAndCollectResult(startKey util.Key, endKey util.Key, pr
 			i--
 		}
 	}
-	
 
 	return true, mergeResult
 }
-
-
-
-
 
 // flush the specified memtable to disk
 // Following steps are included:
@@ -502,7 +492,6 @@ func (vl *VLStore) flushMemTable(table *memtable.MBTree) {
 	componentMeta := vl.componentMetaMap[componentID]
 	componentMeta.Digest = levelRun.Digest
 	vl.componentMetaMap[componentID] = componentMeta
-	
 
 	// Insert the run into the disk-level
 	var level *run.Level = nil

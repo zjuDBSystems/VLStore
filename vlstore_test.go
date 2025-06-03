@@ -419,3 +419,218 @@ func TestVLStoreRangeQueryPerformance(t *testing.T) {
 	}
 }
 
+// 测试VLStore的写入QPS和延迟
+func TestVLStoreWriteQPSAndLatency(t *testing.T) {
+	// 创建临时目录用于测试
+	testDir := "test_vlstore_write_qps_dir"
+	err := os.MkdirAll(testDir, 0755)
+	if err != nil {
+		t.Fatalf("创建测试目录失败: %v", err)
+	}
+	defer os.RemoveAll(testDir)
+
+	// 测试不同配置下的写入QPS和延迟
+	testCases := []struct {
+		name         string
+		fanout       int
+		epsilon      int
+		baseStateNum int
+		sizeRatio    int
+		numEntries   int // 要插入的键值对数量
+	}{
+		//{"小数据量", 4, 23, 1000, 2, 10000},
+		//{"中数据量", 4, 23, 1000, 2, 50000},
+		{"大数据量", 4, 23, 64000, 2, 1000000},
+	}
+
+	// 固定值大小为1KB
+	valueSize := 1024
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// 创建配置
+			configs := util.NewConfigs(tc.fanout, tc.epsilon, testDir, tc.baseStateNum, tc.sizeRatio)
+
+			// 创建VLStore实例
+			store := NewVLStore(configs)
+
+			// 生成顺序键值对
+			keyValues := generateSequentialKeyValues(tc.numEntries, valueSize)
+
+			// 记录每次写入的延迟
+			var totalLatency time.Duration
+			var maxLatency time.Duration
+			var minLatency time.Duration = time.Hour // 初始化为一个很大的值
+
+			// 测量总体写入时间和单次写入延迟
+			overallStart := time.Now()
+
+			for i, kv := range keyValues {
+				writeStart := time.Now()
+				store.Insert(kv.Key, kv.Value)
+				writeLatency := time.Since(writeStart)
+
+				totalLatency += writeLatency
+				if writeLatency > maxLatency {
+					maxLatency = writeLatency
+				}
+				if writeLatency < minLatency {
+					minLatency = writeLatency
+				}
+
+				// 每10000次操作打印一次进度
+				if (i+1)%10000 == 0 {
+					t.Logf("已完成 %d/%d 次写入", i+1, tc.numEntries)
+				}
+			}
+
+			overallTime := time.Since(overallStart)
+
+			// 计算指标
+			avgLatency := totalLatency / time.Duration(tc.numEntries)
+			qps := float64(tc.numEntries) / overallTime.Seconds()
+			totalDataMB := float64(tc.numEntries*(8+valueSize)) / (1024 * 1024)
+
+			t.Logf("配置: %s", tc.name)
+			t.Logf("写入 %d 个键值对，每个值大小 %d 字节", tc.numEntries, valueSize)
+			t.Logf("总数据量: %.2f MB", totalDataMB)
+			t.Logf("总耗时: %.2f 秒", overallTime.Seconds())
+			t.Logf("写入QPS: %.2f 操作/秒", qps)
+			t.Logf("平均延迟: %v", avgLatency)
+			t.Logf("最小延迟: %v", minLatency)
+			t.Logf("最大延迟: %v", maxLatency)
+			t.Logf("数据吞吐量: %.2f MB/秒", totalDataMB/overallTime.Seconds())
+
+			// 验证插入是否成功（随机抽样检查）
+			sampleSize := 100
+			if tc.numEntries < sampleSize {
+				sampleSize = tc.numEntries
+			}
+
+			for i := 0; i < sampleSize; i++ {
+				idx := rand.Intn(tc.numEntries)
+				key := keyValues[idx].Key
+				expectedValue := keyValues[idx].Value
+				value := store.Search(key)
+
+				if value == nil {
+					t.Errorf("键 %d 未找到", key)
+					continue
+				}
+
+				if string(value) != string(expectedValue) {
+					t.Errorf("键 %d 的值不匹配", key)
+				}
+			}
+		})
+	}
+}
+
+// 测试VLStore的范围查询QPS
+func TestVLStoreRangeQueryQPS(t *testing.T) {
+	// 创建临时目录用于测试
+	testDir := "test_vlstore_range_qps_dir"
+	err := os.MkdirAll(testDir, 0755)
+	if err != nil {
+		t.Fatalf("创建测试目录失败: %v", err)
+	}
+	defer os.RemoveAll(testDir)
+
+	// 创建配置
+	fanout := 4
+	epsilon := 4
+	baseStateNum := 64000
+	sizeRatio := 2
+	configs := util.NewConfigs(fanout, epsilon, testDir, baseStateNum, sizeRatio)
+
+	// 创建VLStore实例
+	store := NewVLStore(configs)
+
+	// 数据准备
+	numEntries := 1000000
+	valueSize := 1024
+	// 生成顺序键值对
+	keyValues := generateSequentialKeyValues(numEntries, valueSize)
+
+	t.Logf("开始插入 %d 个键值对", numEntries)
+	// 单线程顺序写入
+	for i, kv := range keyValues {
+		store.Insert(kv.Key, kv.Value)
+		if (i+1)%10000 == 0 {
+			t.Logf("已插入 %d/%d 个键值对", i+1, numEntries)
+		}
+	}
+
+	// 等待异步操作完成
+	time.Sleep(5 * time.Second)
+	t.Logf("数据插入完成，开始测试范围查询QPS")
+
+	// 测试不同范围大小的查询QPS
+	testCases := []struct {
+		name       string
+		rangeSize  int
+		numQueries int
+	}{
+		{"大范围查询", 5, 1000},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			var totalLatency time.Duration
+			var maxLatency time.Duration
+			var minLatency time.Duration = time.Hour
+			var totalResultCount int
+
+			// 测量总体查询时间
+			overallStart := time.Now()
+
+			for i := 0; i < tc.numQueries; i++ {
+				// 随机选择一个范围起点，确保不超出数据范围
+				startKey := util.Key(rand.Intn(numEntries - tc.rangeSize))
+				endKey := startKey + util.Key(tc.rangeSize)
+
+				// 测量单次查询延迟
+				queryStart := time.Now()
+				proof := store.SearchWithProof(startKey, endKey)
+				rootHash := store.ComputeDigest()
+				valid, results := store.VerifyAndCollectResult(startKey, endKey, proof, rootHash, fanout)
+				queryLatency := time.Since(queryStart)
+
+				// 验证查询结果
+				if !valid {
+					t.Errorf("第 %d 次查询验证失败，范围 [%d, %d]", i+1, startKey, endKey)
+				}
+
+				totalLatency += queryLatency
+				totalResultCount += len(results)
+				if queryLatency > maxLatency {
+					maxLatency = queryLatency
+				}
+				if queryLatency < minLatency {
+					minLatency = queryLatency
+				}
+
+				// 每100次查询打印一次进度
+				if (i+1)%100 == 0 {
+					t.Logf("已完成 %d/%d 次查询", i+1, tc.numQueries)
+				}
+			}
+
+			overallTime := time.Since(overallStart)
+
+			// 计算指标
+			avgLatency := totalLatency / time.Duration(tc.numQueries)
+			qps := float64(tc.numQueries) / overallTime.Seconds()
+			avgResultCount := float64(totalResultCount) / float64(tc.numQueries)
+
+			t.Logf("范围大小: %d", tc.rangeSize)
+			t.Logf("查询次数: %d", tc.numQueries)
+			t.Logf("总耗时: %.2f 秒", overallTime.Seconds())
+			t.Logf("范围查询QPS: %.2f 查询/秒", qps)
+			t.Logf("平均延迟: %v", avgLatency)
+			t.Logf("最小延迟: %v", minLatency)
+			t.Logf("最大延迟: %v", maxLatency)
+			t.Logf("平均返回结果数: %.1f", avgResultCount)
+		})
+	}
+}
