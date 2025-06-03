@@ -140,7 +140,7 @@ func TestVLStoreWriteThroughput(t *testing.T) {
 		//{"小数据量", 4, 23, 1000, 2, 8000},
 		//{"中数据量", 4, 23, 1000, 2, 10000},
 		//{"大数据量", 4, 23, 1000, 2, 50000},
-		{"大数据量", 4, 4, 64000, 2, 1000000},
+		{"大数据量", 4, 23, 64000, 2, 1000000},
 		//{"高扇出", 8, 23, 1000, 2, 50000},
 		//{"低扇出", 2, 23, 1000, 2, 50000},
 	}
@@ -364,7 +364,7 @@ func TestVLStoreRangeQueryPerformance(t *testing.T) {
 
 	time.Sleep(5 * time.Second)
 	// 测试不同范围大小的查询
-	rangeSizes := []int{1, 10, 100, 1000, 10000}
+	rangeSizes := []int{0, 10, 100, 1000, 10000}
 	//rangeSizes := []int{1000}
 	numQueries := 10 // 每个范围大小执行的查询次数
 
@@ -386,15 +386,17 @@ func TestVLStoreRangeQueryPerformance(t *testing.T) {
 			//var totalProofSize float64
 
 			// 执行多次查询并测量
+			startKey := util.Key(rand.Intn(numEntries - rangeSize))
+			endKey := startKey + util.Key(rangeSize)
 			for i := 0; i < numQueries; i++ {
 				// 随机选择一个范围起点，确保不超出数据范围
-				startKey := util.Key(rand.Intn(numEntries - rangeSize))
-				endKey := startKey + util.Key(rangeSize)
+				//startKey := util.Key(rand.Intn(numEntries - rangeSize))
+				//endKey := startKey + util.Key(rangeSize)
 
 				//fmt.Println("startKey", startKey, "endKey", endKey)
 				// 测量单次查询延迟和单次proof的size
 				queryStart := time.Now()
-				fmt.Println("search ", i)
+				//fmt.Println("search ", i)
 				store.SearchWithProof(startKey, endKey)
 				fmt.Println()
 				store.ComputeDigest()

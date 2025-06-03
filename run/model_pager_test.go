@@ -50,7 +50,7 @@ func TestModelPager(t *testing.T) {
 		for i := 0; i < n; i++ {
 			pageID := i / MAX_NUM_MODEL_IN_PAGE
 			innerPagePos := i % MAX_NUM_MODEL_IN_PAGE
-			collections, err := reader.ReadDeserPageAt(pageID)
+			collections, err := reader.ReadPageAt(0, pageID, nil)
 			if err != nil {
 				t.Fatalf("Failed to read page: %v", err)
 			}

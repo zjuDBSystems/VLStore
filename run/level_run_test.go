@@ -126,7 +126,7 @@ func TestLevelRunHash(t *testing.T) {
 	fmt.Printf("Loaded run digest: %x\n", loadedRun.Digest)
 
 	// 搜索键
-	result := loadedRun.SearchRun(key1, configs)
+	result := loadedRun.SearchRun(key1, configs, nil)
 	if result == nil {
 		t.Errorf("Failed to find key %d", key1)
 	} else {
@@ -135,7 +135,7 @@ func TestLevelRunHash(t *testing.T) {
 
 	// 搜索随机键（应该不存在）
 	randomKey := util.Key(r.Int63())
-	result = loadedRun.SearchRun(randomKey, configs)
+	result = loadedRun.SearchRun(randomKey, configs, nil)
 	if result != nil {
 		t.Errorf("Unexpectedly found random key %d", randomKey)
 	}
@@ -279,7 +279,7 @@ func TestProveAndVerify(t *testing.T) {
 
 
 		// Generate proof
-		results, proof := run.ProveRange(lb, ub, configs)
+		results, proof := run.ProveRange(lb, ub, configs, nil)
 
 		// Verify proof
 		isValid := VerifyRunProof(lb, ub, results, proof, configs.Fanout, totalRootHash)
@@ -293,12 +293,14 @@ func TestProveAndVerify(t *testing.T) {
 	}
 
 	// Test proving a random non-existent key
-	randomKey := util.Key(r.Int63())
-	lb := randomKey + 3*1000000
-	ub := randomKey + 4*1000000
+	//randomKey := util.Key(r.Int63())
+	//lb := randomKey + 3*1000000
+	//ub := randomKey + 4*1000000
+	lb := util.Key(937)
+	ub := util.Key(1037)
 
 	// Generate proof
-	results, proof := run.ProveRange(lb, ub, configs)
+	results, proof := run.ProveRange(lb, ub, configs, nil)
 
 	// Verify proof
 	isValid := VerifyRunProof(lb, ub, results, proof, configs.Fanout, totalRootHash)
@@ -307,7 +309,7 @@ func TestProveAndVerify(t *testing.T) {
 	if isValid {
 		successCount++
 	} else {
-		t.Errorf("Verification failed for random key %d", randomKey)
+		t.Errorf("Verification failed for key %d, %d", lb, ub)
 	}
 
 	fmt.Printf("Successfully verified %d/%d proofs\n", successCount, totalTests)

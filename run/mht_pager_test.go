@@ -46,7 +46,7 @@ func TestHashPager(t *testing.T) {
 			innerPagePos := i % MAX_NUM_HASH_IN_PAGE
 
 			// 读取页面
-			v, err := reader.ReadPageAt(pageId)
+			v, err := reader.ReadPageAt(0, pageId, nil)
 			if err != nil {
 				t.Fatalf("Failed to read page at %d: %v", pageId, err)
 			}
@@ -119,7 +119,7 @@ func TestConstructMHT(t *testing.T) {
 		i := r.Intn(n-50)
 		j := i + 50
 		// 获取非叶子证明
-		proof := reader.proveNonLeaf(i, j, n, fanout)
+		proof := reader.proveNonLeaf(0,i, j, n, fanout, nil)
 			
 		// 获取叶子证明
 		proveLeaf(i, j, n, fanout, proof, leafHashCollection)

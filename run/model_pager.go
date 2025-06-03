@@ -178,29 +178,35 @@ func LoadModelPageReader(fileName string) (*ModelPageReader, error) {
 
 /* Load the deserialized vector of the page from the file at given page_id
  */
-func (m *ModelPageReader) ReadDeserPageAt(pageID int) (*ModelCollections, error) {
+func (m *ModelPageReader) ReadPageAt(componentID int, pageID int, cacheManager *CacheManager) (*ModelCollections, error) {
 	m.PageReads++
-	// 直接从文件加载页面
-	offset := pageID * PAGE_SIZE
-	bytes := make([]byte, PAGE_SIZE)
-	_, err := m.File.ReadAt(bytes, int64(offset))
-	if err != nil {
-		return nil, err
+	// first check whether the cache contains the page
+	modelCollection, ok := cacheManager.GetModelPage(componentID, pageID)
+	if ok {
+		return modelCollection, nil
+	}else {
+		// cache does not contain the page, should load the page from the file
+		offset := pageID * PAGE_SIZE
+		bytes := make([]byte, PAGE_SIZE)
+		_, err := m.File.ReadAt(bytes, int64(offset))
+		if err != nil {
+			return nil, err
+		}
+		page := NewPageFromArray([PAGE_SIZE]byte(bytes))
+		modelCollection := page.ToModelVector()
+		// before return the vector, add it to the cache with page_id as the key
+		cacheManager.SetModelPage(componentID, pageID, modelCollection)
+		return modelCollection, nil
 	}
-
-	page := NewPageFromArray([PAGE_SIZE]byte(bytes))
-	modelCollection := page.ToModelVector()
-
-	return modelCollection, nil
 }
 
 /* Query Models in the model file
  */
-func (m *ModelPageReader) GetPredStatePos(searchKey util.Key, epsilon int) (int, error) {
+func (m *ModelPageReader) GetPredKeyPos(componentID int, searchKey util.Key, epsilon int, cacheManager *CacheManager) (int, error) {
 	/* First load the last page and find the model that covers the search key
 	 */
 	lastPageID := m.NumStoredPages - 1
-	topModelCollection, err := m.ReadDeserPageAt(lastPageID)
+	topModelCollection, err := m.ReadPageAt(componentID, lastPageID, cacheManager)
 	if err != nil {
 		return 0, err
 	}
@@ -219,7 +225,7 @@ func (m *ModelPageReader) GetPredStatePos(searchKey util.Key, epsilon int) (int,
 		predPageIDUb := int(math.Min(float64(lastPageID), float64((predPos+int(epsilon)+1)/MAX_NUM_MODEL_IN_PAGE)))
 
 		modelLevel--
-		predPos, err = m.QueryModel(predPageIDLb, predPageIDUb, searchKey, modelLevel)
+		predPos, err = m.QueryModel(componentID, predPageIDLb, predPageIDUb, searchKey, modelLevel, cacheManager)
 		if err != nil {
 			return 0, err
 		}
@@ -229,7 +235,7 @@ func (m *ModelPageReader) GetPredStatePos(searchKey util.Key, epsilon int) (int,
 			predPageIDUb = int(math.Min(float64(lastPageID), float64((predPos+int(epsilon)+1)/MAX_NUM_MODEL_IN_PAGE)))
 
 			modelLevel--
-			predPos, err = m.QueryModel(predPageIDLb, predPageIDUb, searchKey, modelLevel)
+			predPos, err = m.QueryModel(componentID, predPageIDLb, predPageIDUb, searchKey, modelLevel, cacheManager)
 			if err != nil {
 				return 0, err
 			}
@@ -239,11 +245,11 @@ func (m *ModelPageReader) GetPredStatePos(searchKey util.Key, epsilon int) (int,
 	}
 }
 
-func (m *ModelPageReader) QueryModel(pageIDLb int, pageIDUb int, searchKey util.Key, modelLevel int) (int, error) {
+func (m *ModelPageReader) QueryModel(runId int, pageIDLb int, pageIDUb int, searchKey util.Key, modelLevel int, cacheManager *CacheManager) (int, error) {
 	modelV := []*util.KeyModel{}
 
 	for pageID := pageIDLb; pageID <= pageIDUb; pageID++ {
-		collection, err := m.ReadDeserPageAt(pageID)
+		collection, err := m.ReadPageAt(runId, pageID, cacheManager)
 		if err != nil {
 			return 0, err
 		}

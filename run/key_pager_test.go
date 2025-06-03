@@ -44,7 +44,7 @@ func TestKeyPager(t *testing.T) {
 		}
 		
 		fmt.Printf("测试第 %d 次, 读取位置范围: %d - %d\n", j, posL, posR)
-		keyoffsets, err := reader.ReadDeserPageRange(posL, posR)
+		keyoffsets, err := reader.ReadPageRange(0, posL, posR, nil)
 		if err != nil {
 			t.Fatalf("读取失败: %v", err)
 		}

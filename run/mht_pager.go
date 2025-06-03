@@ -197,24 +197,32 @@ func LoadHashPageReader(fileName string) (*HashPageReader, error) {
 /*
 Load the deserialized vector of the page from the file at given page_id
 */
-func (r *HashPageReader) ReadPageAt(pageId int) ([]util.H256, error) {
+func (r *HashPageReader) ReadPageAt(componentID int, pageId int, cacheManager *CacheManager) ([]util.H256, error) {
 	r.PageReads++
-	//  load the page from the file
-	offset := int64(pageId * PAGE_SIZE)
-	bytes := make([]byte, PAGE_SIZE)
-	_, err := r.File.ReadAt(bytes, offset)
-	if err != nil {
-		return nil, err
+	// first check whether the cache contains the page
+	pageVector, ok := cacheManager.GetMHTPage(componentID, pageId)
+	if ok {
+		return pageVector, nil
+	}else {
+		// cache does not contain the page, should load the page from the file
+		offset := int64(pageId * PAGE_SIZE)
+		bytes := make([]byte, PAGE_SIZE)
+		_, err := r.File.ReadAt(bytes, offset)
+		if err != nil {
+			return nil, err
+		}
+		page := NewPageFromArray([PAGE_SIZE]byte(bytes))
+		pageVector := page.ToHashVector()
+		// before return the vector, add it to the cache with page_id as the key
+		cacheManager.SetMHTPage(componentID, pageId, pageVector)
+		return pageVector, nil
 	}
-	page := NewPageFromArray([PAGE_SIZE]byte(bytes))
-	pageVector := page.ToHashVector()
-	return pageVector, nil
 }
 
 /*
 Generate the non-leaf range proof given the left position l, right position r, and the total number of states in the leaf of the MHT
 */
-func (r *HashPageReader) proveNonLeaf(left int, right int, numOfData int, fanout int) *RangeProof {
+func (r *HashPageReader) proveNonLeaf(componentID int, left int, right int, numOfData int, fanout int, cacheManager *CacheManager) *RangeProof {
 	proof := &RangeProof{}
 	proof.indexList = [2]int{left, right}
 	if numOfData == 1 {
@@ -246,7 +254,7 @@ func (r *HashPageReader) proveNonLeaf(left int, right int, numOfData int, fanout
 			pageIdR := proofPosR / MAX_NUM_HASH_IN_PAGE
 			v := make([]util.H256, 0)
 			for pageId := pageIdL; pageId <= pageIdR; pageId++ {
-				hashes, err := r.ReadPageAt(pageId)
+				hashes, err := r.ReadPageAt(componentID, pageId, cacheManager)
 				if err != nil {
 					panic(err)
 				}

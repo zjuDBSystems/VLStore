@@ -178,31 +178,37 @@ func LoadKeyPageReader(fileName string) (*KeyPageReader, error) {
 /*
 Load the deserialized vector of the page from the file at given page_id
 */
-func (r *KeyPageReader) ReadDeserPageAt(pageID int) ([]KeyPos, error) {
-	// load page from the file
-	offset := pageID * PAGE_SIZE
-	bytes := make([]byte, PAGE_SIZE)
-	_, err := r.File.ReadAt(bytes, int64(offset))
-	if err != nil {
-		return nil, err
+func (r *KeyPageReader) ReadPageAt(componentID int, pageID int, cacheManager *CacheManager) ([]KeyPos, error) {
+	// first check whether the cache contains the page
+	keyPos, ok := cacheManager.GetKeyPage(componentID, pageID)
+	if ok {
+		return keyPos, nil
+	}else {
+		// cache does not contain the page, should load the page from the file
+		offset := pageID * PAGE_SIZE
+		bytes := make([]byte, PAGE_SIZE)
+		_, err := r.File.ReadAt(bytes, int64(offset))
+		if err != nil {
+			return nil, err
+		}
+		page := NewPageFromArray([PAGE_SIZE]byte(bytes))
+		keyPos := page.ToKeyPosVector()
+		// before return the vector, add it to the cache with page_id as the key
+		cacheManager.SetKeyPage(componentID, pageID, keyPos)
+		return keyPos, nil
 	}
-	
-	page := NewPageFromArray([PAGE_SIZE]byte(bytes))
-	keyPos := page.ToKeyPosVector()
-
-	return keyPos, nil
 }
 
 /* 
 * Load the deserialized vector given the key's location range
 */
-func (r *KeyPageReader) ReadDeserPageRange(posL int, posR int) ([]KeyPos, error) {
+func (r *KeyPageReader) ReadPageRange(componentID int, posL int, posR int, cacheManager *CacheManager) ([]KeyPos, error) {
 	pageIDL := posL / MAX_NUM_KEY_POS_IN_PAGE
 	pageIDR := posR / MAX_NUM_KEY_POS_IN_PAGE
 
 	keyPos := make([]KeyPos, 0)
 	for pageID := pageIDL; pageID <= pageIDR; pageID++ {
-		keyPosInPage, err := r.ReadDeserPageAt(pageID)
+		keyPosInPage, err := r.ReadPageAt(componentID, pageID, cacheManager)
 		if err != nil {
 			return nil, err
 		}
