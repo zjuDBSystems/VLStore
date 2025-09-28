@@ -8,12 +8,12 @@ import (
 
 type MBTree struct {
 	componentID int
-	root   node
-	keyNum int
-	fanout int
-	tmp    *leafNode
-	last   *leafNode
-	hasher util.Hasher
+	root        node
+	keyNum      int
+	fanout      int
+	tmp         *leafNode
+	last        *leafNode
+	hasher      util.Hasher
 }
 
 func (t *MBTree) GetComponentID() int {
@@ -34,12 +34,12 @@ func (t *MBTree) KeyNum() int {
 func NewBPlusTree(componentID int, fanout int) *MBTree {
 	return &MBTree{
 		componentID: componentID,
-		root:   nil,
-		keyNum: 0,
-		fanout: fanout,
-		tmp:    nil,
-		last:   nil,
-		hasher: util.NewHasher(util.BLAKE3),
+		root:        nil,
+		keyNum:      0,
+		fanout:      fanout,
+		tmp:         nil,
+		last:        nil,
+		hasher:      util.NewHasher(util.BLAKE3),
 	}
 }
 

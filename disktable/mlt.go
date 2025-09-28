@@ -1,16 +1,16 @@
-package run
+package disktable
 
 import (
 	"VLStore/util"
 	"fmt"
 	"math"
 	"sort"
-	//"time"
+	"time"
 )
 
 /* Iterator of key-value vector in memory
  */
- type InMemKeyValueIterator struct {
+type InMemKeyValueIterator struct {
 	KeyValues   []util.KeyValue // the key-values in memory
 	CurValuePos int             // the position of the current value
 }
@@ -32,23 +32,23 @@ func (it *InMemKeyValueIterator) Next() util.KeyValue {
 	return keyValue
 }
 
-// LevelRun 定义了一个层级中的运行
-type LevelRun struct {
-	ComponentID int                // 组件ID
-	KeyReader *KeyPageReader       // 键读取器
-	ValueLog *ValueLog   		   // 值读取器
-	ModelReader *ModelPageReader   // 模型读取器
-	MHTReader   *HashPageReader    // MHT读取器
-	Digest      util.H256          // MHT根摘要
+// MerkleLearnedTable  磁盘组件
+type MerkleLearnedTable struct {
+	ComponentID int              // 组件ID
+	KeyReader   *KeyPageReader   // 键读取器
+	ValueLog    *ValueLog        // 值读取器
+	ModelReader *ModelPageReader // 模型读取器
+	MHTReader   *HashPageReader  // MHT读取器
+	Digest      util.H256        // MHT根摘要
 }
 
-// Load 根据组件ID、层级ID和配置加载一个运行
-func Load(componentID int, levelID int, configs *util.Configs) (*LevelRun, error) {
+// Load 根据组件ID和配置加载一个磁盘组件
+func Load(componentID int, configs *util.Configs) (*MerkleLearnedTable, error) {
 	// 定义值、模型、MHT的文件名
-	keyFileName := FileName(componentID, levelID, configs.DirName, "k")
-	valueFileName := FileName(componentID, levelID, configs.DirName, "v")
-	modelFileName := FileName(componentID, levelID, configs.DirName, "m")
-	mhtFileName := FileName(componentID, levelID, configs.DirName, "h")
+	keyFileName := FileName(componentID, configs.DirName, "k")
+	valueFileName := FileName(componentID, configs.DirName, "v")
+	modelFileName := FileName(componentID, configs.DirName, "m")
+	mhtFileName := FileName(componentID, configs.DirName, "h")
 
 	// 加载三个读取器
 	keyReader, err := LoadKeyPageReader(keyFileName)
@@ -76,10 +76,10 @@ func Load(componentID int, levelID int, configs *util.Configs) (*LevelRun, error
 
 	// 计算摘要
 	digest := mhtRoot
-	return &LevelRun{
+	return &MerkleLearnedTable{
 		ComponentID: componentID,
-		KeyReader: keyReader,
-		ValueLog: valueLog,
+		KeyReader:   keyReader,
+		ValueLog:    valueLog,
 		ModelReader: modelReader,
 		MHTReader:   mhtReader,
 		Digest:      digest,
@@ -87,11 +87,11 @@ func Load(componentID int, levelID int, configs *util.Configs) (*LevelRun, error
 }
 
 // ConstructRunByInMemoryTree 使用内存迭代器构建运行
-func ConstructRunByInMemoryTree(inputKeyValues []util.KeyValue, inputs *InMemKeyValueIterator, componentID int, levelID int, dirName string, epsilon int, fanout int, maxNumOfValue int, levelNumOfRun int, sizeRatio int) (*LevelRun, error) {
-	keyFileName := FileName(componentID, levelID, dirName, "k")
-	valueFileName := FileName(componentID, levelID, dirName, "v")
-	modelFileName := FileName(componentID, levelID, dirName, "m")
-	mhtFileName := FileName(componentID, levelID, dirName, "h")
+func ConstructRunByInMemoryTree(inputKeyValues []util.KeyValue, inputs *InMemKeyValueIterator, componentID int, dirName string, epsilon int, fanout int) (*MerkleLearnedTable, error) {
+	keyFileName := FileName(componentID, dirName, "k")
+	valueFileName := FileName(componentID, dirName, "v")
+	modelFileName := FileName(componentID, dirName, "m")
+	mhtFileName := FileName(componentID, dirName, "h")
 
 	// 根据输入值构建新的值文件、模型文件、MHT文件
 	keyWriter, err := NewKeyPageWriter(keyFileName)
@@ -144,7 +144,7 @@ func ConstructRunByInMemoryTree(inputKeyValues []util.KeyValue, inputs *InMemKey
 	if err != nil {
 		panic(err)
 	}
-	
+
 	// []util.KeyValue -> []KeyPos
 	for i, keyValue := range inputKeyValues {
 		keyPos := KeyPos{
@@ -153,7 +153,7 @@ func ConstructRunByInMemoryTree(inputKeyValues []util.KeyValue, inputs *InMemKey
 		}
 		keyWriter.Append(keyPos)
 	}
-	
+
 	// flush the value writer
 	valueLog.Sync()
 	// flush the key writer
@@ -174,36 +174,36 @@ func ConstructRunByInMemoryTree(inputKeyValues []util.KeyValue, inputs *InMemKey
 	// 计算摘要
 	digest := mhtRoot
 
-	return &LevelRun{
+	return &MerkleLearnedTable{
 		ComponentID: componentID,
-		KeyReader: keyReader,
-		ValueLog: valueLog,
+		KeyReader:   keyReader,
+		ValueLog:    valueLog,
 		ModelReader: modelReader,
 		MHTReader:   mhtReader,
 		Digest:      digest,
 	}, nil
 }
 
-// SearchRun 在运行中搜索键
-func (lr *LevelRun) SearchRun(searchKey util.Key, configs *util.Configs, cacheManager *CacheManager) *util.KeyValue {
+// SearchTable 在磁盘表中搜索键
+func (mlt *MerkleLearnedTable) SearchTable(searchKey util.Key, configs *util.Configs, cacheManager *CacheManager) *util.KeyValue {
 	// 使用模型文件预测值文件中的位置
 	// 计算边界键
 	epsilon := configs.Epsilon
 
 	// 使用模型文件预测位置
-	predPos, err := lr.ModelReader.GetPredKeyPos(lr.ComponentID, searchKey, epsilon, cacheManager)
+	predPos, err := mlt.ModelReader.GetPredKeyPos(mlt.ComponentID, searchKey, epsilon, cacheManager)
 	if err != nil {
 		panic(err)
 	}
 
-	numOfKeys := lr.KeyReader.NumKeyPos
+	numOfKeys := mlt.KeyReader.NumKeyPos
 
 	// 根据预测位置和epsilon计算下界和上界位置
 	posL := int(math.Min(math.Max(float64(predPos-epsilon-1), 0), float64(numOfKeys-1)))
 	posR := int(math.Min(float64(predPos+epsilon+2), float64(numOfKeys-1)))
 
 	// 从给定范围[posL, posR]加载键
-	keyPoss, err := lr.KeyReader.ReadPageRange(lr.ComponentID, posL, posR, cacheManager)
+	keyPoss, err := mlt.KeyReader.ReadPageRange(mlt.ComponentID, posL, posR, cacheManager)
 	if err != nil {
 		panic(err)
 	}
@@ -218,7 +218,7 @@ func (lr *LevelRun) SearchRun(searchKey util.Key, configs *util.Configs, cacheMa
 	}
 
 	// 从值文件中读取目标键的值
-	value, err := lr.ValueLog.Read(targetKeyPos.Pos.BlockNumber, targetKeyPos.Pos.ChunkOffset)
+	value, err := mlt.ValueLog.Read(targetKeyPos.Pos.BlockNumber, targetKeyPos.Pos.ChunkOffset)
 	if err != nil {
 		panic(err)
 	}
@@ -227,21 +227,21 @@ func (lr *LevelRun) SearchRun(searchKey util.Key, configs *util.Configs, cacheMa
 }
 
 // FileName 生成不同文件类型的文件名
-func FileName(runID int, levelID int, dirName string, fileType string) string {
-	return fmt.Sprintf("%s/%s_%d_%d.dat", dirName, fileType, levelID, runID)
+func FileName(componentID int, dirName string, fileType string) string {
+	return fmt.Sprintf("%s/%s_%d.dat", dirName, fileType, componentID)
 }
 
-type RunProof struct {
+type TableProof struct {
 	rangeProof *RangeProof
 }
 
-func NewRunProof() *RunProof {
-	return &RunProof{
+func NewTableProof() *TableProof {
+	return &TableProof{
 		rangeProof: nil,
 	}
 }
 
-func (lr *LevelRun) ProveLeaf(l, r, numOfData, fanout int, proof *RangeProof, cacheManager *CacheManager) {
+func (mlt *MerkleLearnedTable) ProveLeaf(l, r, numOfData, fanout int, proof *RangeProof, cacheManager *CacheManager) {
 	levelL := l
 	levelR := r
 	proofPosL := levelL - levelL%fanout
@@ -252,7 +252,7 @@ func (lr *LevelRun) ProveLeaf(l, r, numOfData, fanout int, proof *RangeProof, ca
 	proofPosR--
 
 	// Read keys from key reader
-	keyPoss, err := lr.KeyReader.ReadPageRange(lr.ComponentID, proofPosL, proofPosR, cacheManager)
+	keyPoss, err := mlt.KeyReader.ReadPageRange(mlt.ComponentID, proofPosL, proofPosR, cacheManager)
 	if err != nil {
 		panic(err)
 	}
@@ -273,7 +273,7 @@ func (lr *LevelRun) ProveLeaf(l, r, numOfData, fanout int, proof *RangeProof, ca
 	// for _, kv := range keyValues {
 	// 	leafHashes = append(leafHashes, kv.ComputeHash(util.NewHasher(util.BLAKE3)))
 	// }
-	
+
 	// // Remove the hashes that are in the proven range
 	// for i := 0; i < (levelR - levelL + 1); i++ {
 	// 	leafHashes = append(leafHashes[:levelL-proofPosL], leafHashes[levelL-proofPosL+1:]...)
@@ -285,22 +285,22 @@ func (lr *LevelRun) ProveLeaf(l, r, numOfData, fanout int, proof *RangeProof, ca
 	totalHashes := len(keyPoss)
 	excludedCount := rangeEnd - rangeStart + 1
 	leafHashes := make([]util.H256, 0, totalHashes-excludedCount)
-	
+
 	hasher := util.NewHasher(util.BLAKE3)
-	
+
 	// 优化2: 边读边计算哈希，跳过不需要的范围
 	for i, keyPos := range keyPoss {
 		// 跳过证明范围内的元素
 		if i >= rangeStart && i <= rangeEnd {
 			continue
 		}
-		
-		value, err := lr.ValueLog.Read(keyPos.Pos.BlockNumber, keyPos.Pos.ChunkOffset)
+
+		value, err := mlt.ValueLog.Read(keyPos.Pos.BlockNumber, keyPos.Pos.ChunkOffset)
 		if err != nil {
 			fmt.Println("keyPos: ", keyPos)
 			panic(err)
 		}
-		
+
 		kv := util.KeyValue{Key: keyPos.Key, Value: value}
 		leafHashes = append(leafHashes, kv.ComputeHash(hasher))
 	}
@@ -316,26 +316,27 @@ If the filter does show that the addr_key does not exist, use the filter + MHT r
 If the filter cannot show, use the MHT to prove the result, add the filter's hash to the proof.
 */
 
-func (lr *LevelRun) ProveRange(startKey, endKey util.Key, configs *util.Configs, cacheManager *CacheManager) ([]util.KeyValue, *RunProof) {
+func (mlt *MerkleLearnedTable) ProveRange(startKey, endKey util.Key, configs *util.Configs, cacheManager *CacheManager) ([]util.KeyValue, *TableProof) {
 	// init the proof
-	proof := NewRunProof()
+	proof := NewTableProof()
 
 	epsilon := configs.Epsilon
 
+	loadKeyStart := time.Now()
 	// Use model file to predict positions
 	//learnIndexStart := time.Now()
-	predPosLow, err := lr.ModelReader.GetPredKeyPos(lr.ComponentID, startKey, epsilon, cacheManager)
+	predPosLow, err := mlt.ModelReader.GetPredKeyPos(mlt.ComponentID, startKey, epsilon, cacheManager)
 	if err != nil {
 		panic(err)
 	}
-	predPosUpper, err := lr.ModelReader.GetPredKeyPos(lr.ComponentID, endKey, epsilon, cacheManager)
+	predPosUpper, err := mlt.ModelReader.GetPredKeyPos(mlt.ComponentID, endKey, epsilon, cacheManager)
 	if err != nil {
 		panic(err)
 	}
-	
-	//fmt.Println("learnIndexTime: ", time.Since(learnIndexStart))
-	
-	numOfKeys := lr.KeyReader.NumKeyPos
+
+	//fmt.Println("LearnedIndexTime: ", time.Since(learnIndexStart))
+
+	numOfKeys := mlt.KeyReader.NumKeyPos
 	// Compute position boundaries based on predictions and epsilon
 	posL := int(math.Min(math.Max(float64(predPosLow-epsilon-1), 0), float64(numOfKeys-1)))
 	posR := int(math.Min(float64(predPosUpper+epsilon+3), float64(numOfKeys-1)))
@@ -346,7 +347,7 @@ func (lr *LevelRun) ProveRange(startKey, endKey util.Key, configs *util.Configs,
 
 	// Load keys from the range
 	//loadKeyStart := time.Now()
-	keyPoss, err := lr.KeyReader.ReadPageRange(lr.ComponentID, posL, posR, cacheManager)
+	keyPoss, err := mlt.KeyReader.ReadPageRange(mlt.ComponentID, posL, posR, cacheManager)
 	if err != nil {
 		panic(err)
 	}
@@ -390,7 +391,7 @@ func (lr *LevelRun) ProveRange(startKey, endKey util.Key, configs *util.Configs,
 	// if leftProofPos == numOfKeys{
 	// 	leftProofPos = numOfKeys - 1
 	// }
-	if leftProofPos > 0 && rightProofPos < numOfKeys-1{
+	if leftProofPos > 0 && rightProofPos < numOfKeys-1 {
 		if keyPoss[lowerIndex].Key == startKey {
 			leftProofPos--
 		}
@@ -401,25 +402,57 @@ func (lr *LevelRun) ProveRange(startKey, endKey util.Key, configs *util.Configs,
 	if rightProofPos == numOfKeys {
 		rightProofPos = numOfKeys - 1
 	}
-	
+
 	// 打印leftProofPos 和 rightProofPos
 	//fmt.Println("leftProofPos: ", leftProofPos)
 	//fmt.Println("rightProofPos: ", rightProofPos)
 	// Get the result key-value pairs
 	resultKeyPoss := keyPoss[leftProofPos-posL : rightProofPos-posL+1]
-	//fmt.Println("loadKeyTime: ", time.Since(loadKeyStart))
+	fmt.Println("loadKeyTime: ", time.Since(loadKeyStart))
 
-	//readValueStart := time.Now()
+	readValueStart := time.Now()
+
 	resultData := make([]util.KeyValue, 0, len(resultKeyPoss))
-	for _, keyPos := range resultKeyPoss {
-		value, err := lr.ValueLog.Read(keyPos.Pos.BlockNumber, keyPos.Pos.ChunkOffset)
+
+	if len(resultKeyPoss) > 0 {
+		// Optimization: Use ReadBatch to fetch all values efficiently.
+
+		// 1. Prepare the list of chunk positions to read.
+		positionsToRead := make([]*ChunkPosition, len(resultKeyPoss))
+		// Create a map from chunk offset back to the original KeyPos object.
+		posMap := make(map[uint64]KeyPos, len(resultKeyPoss))
+
+		for i, kp := range resultKeyPoss {
+			positionsToRead[i] = kp.Pos
+			posMap[kp.Pos.ChunkOffset] = kp
+		}
+
+		// The positions are already logically sorted by key, which means they are also
+		// physically sorted if the data was written sequentially.
+		// For the general case, we would sort positionsToRead physically here.
+		// For now, we proceed as is, leveraging the sequential write optimization.
+
+		// 2. Call the new batch read method.
+		valueMapByOffset, err := mlt.ValueLog.ReadBatch(positionsToRead)
 		if err != nil {
-			fmt.Println("key: ", keyPos.Key, "pos: blockNumber: ", keyPos.Pos.BlockNumber, "chunkOffset: ", keyPos.Pos.ChunkOffset)
 			panic(err)
 		}
-		resultData = append(resultData, util.KeyValue{Key: keyPos.Key, Value: value})
+
+		// 3. Reassemble the final result in the correct logical key order.
+		for _, originalKeyPos := range resultKeyPoss {
+			value, ok := valueMapByOffset[originalKeyPos.Pos.ChunkOffset]
+			if !ok {
+				// This should not happen if ReadBatch works correctly
+				panic(fmt.Sprintf("value not found for key %d", originalKeyPos.Key))
+			}
+			resultData = append(resultData, util.KeyValue{
+				Key:   originalKeyPos.Key,
+				Value: value,
+			})
+		}
 	}
-	//fmt.Println("readValueTime: ", time.Since(readValueStart))
+
+	fmt.Println("readValueTime: ", time.Since(readValueStart))
 	// 打印resultKeyPoss 中的key
 	//fmt.Println("resultKeyPoss :")
 	//for _, kv := range resultKeyPoss {
@@ -428,31 +461,33 @@ func (lr *LevelRun) ProveRange(startKey, endKey util.Key, configs *util.Configs,
 	//fmt.Println()
 
 	// Generate non-leaf range proof
+	proofGenerateStart := time.Now()
 	//proveNonLeafStart := time.Now()
 	fanout := configs.Fanout
-	rangeProof := lr.MHTReader.proveNonLeaf(lr.ComponentID, leftProofPos, rightProofPos, numOfKeys, fanout, cacheManager)
-	//fmt.Println("proveNonLeafTime: ", time.Since(proveNonLeafStart))	
+	rangeProof := mlt.MHTReader.proveNonLeaf(mlt.ComponentID, leftProofPos, rightProofPos, numOfKeys, fanout, cacheManager)
+	//fmt.Println("proveNonLeafTime: ", time.Since(proveNonLeafStart))
 	// Generate leaf range proof
 	//proveLeafStart := time.Now()
-	lr.ProveLeaf(leftProofPos, rightProofPos, numOfKeys, fanout, rangeProof, cacheManager)
+	mlt.ProveLeaf(leftProofPos, rightProofPos, numOfKeys, fanout, rangeProof, cacheManager)
 	//fmt.Println("proveLeafTime: ", time.Since(proveLeafStart))
 	proof.rangeProof = rangeProof
+	fmt.Println("generateProofTime: ", time.Since(proofGenerateStart))
 
 	return resultData, proof
 }
 
 // VerifyRunProof verifies a run proof against a known root hash
-func VerifyRunProof(startKey, endKey util.Key, results []util.KeyValue, proof *RunProof, fanout int, rootHash util.H256) bool {
+func VerifyRunProof(startKey, endKey util.Key, results []util.KeyValue, proof *TableProof, fanout int, rootHash util.H256) bool {
 	for i, result := range results {
 		if i == 0 {
 			if result.Key >= startKey {
 				return false
 			}
-		}else if i == len(results)-1 {
+		} else if i == len(results)-1 {
 			if result.Key <= endKey {
 				return false
 			}
-		}else{
+		} else {
 			if result.Key < startKey || result.Key > endKey {
 				return false
 			}
@@ -464,12 +499,11 @@ func VerifyRunProof(startKey, endKey util.Key, results []util.KeyValue, proof *R
 		resultsHashes[i] = result.ComputeHash(util.NewHasher(util.BLAKE3))
 	}
 
-	
 	reconstructMerkleRoot := ReconstructRangeProof(rangeProof, fanout, resultsHashes, util.NewHasher(util.BLAKE3))
 	return reconstructMerkleRoot == rootHash
 }
 
-func ReconstructRunProof(startKey, endKey util.Key, results []util.KeyValue, proof *RunProof, fanout int) (bool, util.H256) {
+func ReconstructRunProof(startKey, endKey util.Key, results []util.KeyValue, proof *TableProof, fanout int) (bool, util.H256) {
 	// 打印 results 中的第一个和最后一个key
 	//fmt.Println("results[0].Key: ", results[0].Key)
 	//fmt.Println("results[len(results)-1].Key: ", results[len(results)-1].Key)
@@ -493,8 +527,7 @@ func ReconstructRunProof(startKey, endKey util.Key, results []util.KeyValue, pro
 	for i, result := range results {
 		resultsHashes[i] = result.ComputeHash(util.NewHasher(util.BLAKE3))
 	}
-	
+
 	reconstructMerkleRoot := ReconstructRangeProof(rangeProof, fanout, resultsHashes, util.NewHasher(util.BLAKE3))
 	return true, reconstructMerkleRoot
 }
-

@@ -57,7 +57,7 @@ func generateRun(levelID int, runID int, n int, configs *util.Configs, seed int6
 	it := NewInMemKeyValueIterator(keyValues)
 
 	// 构建运行
-	run, err := ConstructRunByInMemoryTree(it, runID, levelID, configs.DirName, configs.Epsilon, configs.Fanout, configs.MaxNumOfStatesInARun(levelID), 1, configs.SizeRatio)
+	run, err := ConstructRunByInMemoryTree(keyValues, it, runID, levelID, configs.DirName, configs.Epsilon, configs.Fanout, configs.MaxNumOfStatesInARun(levelID), 1, configs.SizeRatio)
 	if err != nil {
 		return nil, err
 	}
@@ -86,6 +86,7 @@ func TestLevel(t *testing.T) {
 
 	n := 100
 	configs := util.NewConfigs(
+		fanout,
 		fanout,
 		epsilon,
 		dirName,

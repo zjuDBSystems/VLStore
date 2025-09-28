@@ -1,0 +1,353 @@
+package disktable
+
+import (
+	"VLStore/util"
+	"encoding/binary"
+)
+
+const (
+	PAGE_SIZE             = 4096
+	MAX_NUM_HASH_IN_PAGE  = PAGE_SIZE/util.H256_SIZE - 1 // dedeuction of one is because we need to store some meta-data (i.e., num_of_hash) in the page
+	MAX_NUM_MODEL_IN_PAGE = PAGE_SIZE / util.Model_SIZE - 1  // dedeuction of one is because we need to store some meta-data (i.e., num_of_model) in the page
+	MAX_NUM_KEY_POS_IN_PAGE = PAGE_SIZE / util.KEY_POS_SIZE - 1 // dedeuction of one is because we need to store some meta-data (i.e., num_of_key_pos) in the page
+)
+
+/* Structure of the page with default 4096 byte
+ */
+type Page struct {
+	Data [PAGE_SIZE]byte
+}
+
+/* Initialize a page with 4096 bytes
+ */
+func NewPage() *Page {
+	return &Page{}
+}
+
+/* Create a page with the given data block
+ */
+func NewPageFromArray(data [PAGE_SIZE]byte) *Page {
+	return &Page{Data: data}
+}
+
+/*
+Write key-offset vector to the page
+4 bytes num of key | (8 bytes key, 4 bytes value offset) for each key-value
+*/
+func NewPageFromKeyPosVector(keyPos []KeyPos) *Page {
+	// check the length of the vector is inside the maximum number in page
+	if len(keyPos) > MAX_NUM_KEY_POS_IN_PAGE {
+		panic("key-pos vector size is larger than page size")
+	}
+
+	p := NewPage()
+
+	// write the number of key in the front of the page
+	numOfKeys := uint32(len(keyPos))
+	binary.BigEndian.PutUint32(p.Data[0:4], numOfKeys)
+
+	// iteratively write each key-offset to the page
+	offset := 4
+	for i := uint32(0); i < numOfKeys; i++ {
+		// key (8 bytes)
+		binary.BigEndian.PutUint64(p.Data[offset:offset+8], uint64(keyPos[i].Key))
+		// value offset (16 bytes)
+		binary.BigEndian.PutUint32(p.Data[offset+8:offset+12], keyPos[i].Pos.BlockNumber)
+		binary.BigEndian.PutUint64(p.Data[offset+12:offset+20], keyPos[i].Pos.ChunkOffset)
+		binary.BigEndian.PutUint32(p.Data[offset+20:offset+24], keyPos[i].Pos.ChunkSize)
+		offset += util.KEY_POS_SIZE
+	}
+
+	return p
+}
+
+/*
+Read the key-offsets from a page
+*/
+func (p *Page) ToKeyPosVector() []KeyPos {
+	keyPoss := make([]KeyPos, 0)
+
+	// deserialize the number of key in the page
+	numOfKeys := binary.BigEndian.Uint32(p.Data[0:4])
+
+	// deserialize each of the key-offset from the page
+	offset := 4
+	for i := uint32(0); i < numOfKeys; i++ {
+		if offset+util.KEY_POS_SIZE > PAGE_SIZE {
+			panic("exceed page size")
+		}
+
+		// key (8 bytes)
+		key := util.Key(binary.BigEndian.Uint64(p.Data[offset : offset+8]))
+		// value postion (16 bytes)
+		blockNumber := binary.BigEndian.Uint32(p.Data[offset+8 : offset+12])
+		chunkOffset := binary.BigEndian.Uint64(p.Data[offset+12 : offset+20])
+		chunkSize := binary.BigEndian.Uint32(p.Data[offset+20 : offset+24])
+		keyPos := KeyPos{Key: key, Pos: &ChunkPosition{BlockNumber: blockNumber, ChunkOffset: chunkOffset, ChunkSize: chunkSize}}
+		keyPoss = append(keyPoss, keyPos)
+		offset += util.KEY_POS_SIZE
+	}
+
+	return keyPoss
+}
+
+
+/*
+Write value vector to the page
+4 bytes num of value | (4 bytes length, value bytes) for each value
+*/
+func NewPageFromValueVector(values []util.Value) *Page {
+	// check the length of the vector is inside the maximum number in page
+	totalBytes := 4
+	for _, value := range values {
+		totalBytes += len(value) + 4
+	}
+
+	if totalBytes > PAGE_SIZE {
+		panic("value vector size is larger than page size")
+	}
+
+	p := NewPage()
+
+	// write the number of value in the front of the page
+	numOfValues := uint32(len(values))
+	binary.BigEndian.PutUint32(p.Data[0:4], numOfValues)
+
+	// iteratively write each value to the page
+	offset := 4
+	for _, value := range values {
+		// value length
+		valueLen := uint32(len(value))
+		binary.BigEndian.PutUint32(p.Data[offset:offset+4], valueLen)
+		offset += 4
+
+		// value
+		copy(p.Data[offset:offset+int(valueLen)], value)
+		offset += int(valueLen)
+	}
+
+	return p
+}
+
+/*
+Read the values from a page
+*/
+func (p *Page) ToValueVector() []util.Value {
+	v := make([]util.Value, 0)
+
+	// deserialize the number of value in the page
+	numOfValues := binary.BigEndian.Uint32(p.Data[0:4])
+
+	// deserialize each of the value from the page
+	offset := 4
+	for i := uint32(0); i < numOfValues; i++ {
+		// read the value length
+		if offset+4 > PAGE_SIZE {
+			panic("exceed page size")
+		}
+		valueLen := binary.BigEndian.Uint32(p.Data[offset : offset+4])
+		offset += 4
+
+		// read the value
+		if offset+int(valueLen) > PAGE_SIZE {
+			panic("exceed page size")
+		}
+		value := make(util.Value, valueLen)
+		copy(value, p.Data[offset:offset+int(valueLen)])
+		v = append(v, value)
+		offset += int(valueLen)
+	}
+
+	return v
+}
+
+/*
+Write key-value vector to the page
+4 bytes num of key-value | (8 bytes key, 4 bytes value length, value bytes) for each key-value
+*/
+func NewPageFromKeyValueVector(keyValues []util.KeyValue) *Page {
+	// check the length of the vector is inside the maximum number in page
+	totalBytes := 4
+	for _, kv := range keyValues {
+		totalBytes += 8 + 4 + len(kv.Value) // 8 bytes for key, 4 bytes for value length, value bytes
+	}
+
+	if totalBytes > PAGE_SIZE {
+		panic("key-value vector size is larger than page size")
+	}
+
+	p := NewPage()
+
+	// write the number of key-value in the front of the page
+	numOfKeyValues := uint32(len(keyValues))
+	binary.BigEndian.PutUint32(p.Data[0:4], numOfKeyValues)
+
+	// iteratively write each key-value to the page
+	offset := 4
+	for _, kv := range keyValues {
+		// key (8 bytes)
+		binary.BigEndian.PutUint64(p.Data[offset:offset+8], uint64(kv.Key))
+		offset += 8
+
+		// value length
+		valueLen := uint32(len(kv.Value))
+		binary.BigEndian.PutUint32(p.Data[offset:offset+4], valueLen)
+		offset += 4
+
+		// value
+		copy(p.Data[offset:offset+int(valueLen)], kv.Value)
+		offset += int(valueLen)
+	}
+
+	return p
+}
+
+/*
+Read the key-values from a page
+*/
+func (p *Page) ToKeyValueVector() []util.KeyValue {
+	kv := make([]util.KeyValue, 0)
+
+	// deserialize the number of key-value in the page
+	numOfKeyValues := binary.BigEndian.Uint32(p.Data[0:4])
+
+	// deserialize each of the key-value from the page
+	offset := 4
+	for i := uint32(0); i < numOfKeyValues; i++ {
+		// read the key
+		if offset+8 > PAGE_SIZE {
+			panic("exceed page size")
+		}
+		key := util.Key(binary.BigEndian.Uint64(p.Data[offset : offset+8]))
+		offset += 8
+
+		// read the value length
+		if offset+4 > PAGE_SIZE {
+			panic("exceed page size")
+		}
+		valueLen := binary.BigEndian.Uint32(p.Data[offset : offset+4])
+		offset += 4
+
+		// read the value
+		if offset+int(valueLen) > PAGE_SIZE {
+			panic("exceed page size")
+		}
+		value := make(util.Value, valueLen)
+		copy(value, p.Data[offset:offset+int(valueLen)])
+		kv = append(kv, util.KeyValue{Key: key, Value: value})
+		offset += int(valueLen)
+	}
+
+	return kv
+}
+
+/*
+Write hash vector to the page
+4 bytes num of hash | hash_0, hash_1, ...
+*/
+func NewPageFromHashVector(hashes []util.H256) *Page {
+	// check the length of the vector is inside the maximum number in page
+	if len(hashes) > MAX_NUM_HASH_IN_PAGE {
+		panic("hash vector size is larger than page size")
+	}
+
+	p := NewPage()
+
+	// write the number of hash in the front of the page
+	numOfHashes := uint32(len(hashes))
+	binary.BigEndian.PutUint32(p.Data[0:4], numOfHashes)
+
+	// iteratively write each hash to the page
+	offset := 4
+	for _, hash := range hashes {
+		copy(p.Data[offset:offset+util.H256_SIZE], hash[:])
+		offset += util.H256_SIZE
+	}
+
+	return p
+}
+
+/*
+Read the hashes from a block
+*/
+func (p *Page) ToHashVector() []util.H256 {
+	hashes := make([]util.H256, 0)
+
+	// deserialize the number of hash in the page
+	numOfHashes := binary.BigEndian.Uint32(p.Data[0:4])
+
+	// deserialize each of the hash from the page
+	offset := 4
+	for i := uint32(0); i < numOfHashes; i++ {
+		if offset+util.H256_SIZE > PAGE_SIZE {
+			panic("exceed page size")
+		}
+		hash := util.H256{}
+		copy(hash[:], p.Data[offset:offset+util.H256_SIZE])
+		hashes = append(hashes, hash)
+		offset += util.H256_SIZE
+	}
+
+	return hashes
+}
+
+/*
+Write the model vector to the page
+4 bytes model level | 4 bytes number of models | model 1 | model 2 | ...
+*/
+func NewPageFromModelVector(models []*util.KeyModel, modelLevel int) *Page {
+	// check the length of the vector is inside the maximum number in page
+	if len(models) > MAX_NUM_MODEL_IN_PAGE {
+		panic("model vector size is larger than page size")
+	}
+
+	p := NewPage()
+
+	// write the model level to the page
+	binary.BigEndian.PutUint32(p.Data[0:4], uint32(modelLevel))
+
+	// write the number of models to the page
+	numModels := uint32(len(models))
+	binary.BigEndian.PutUint32(p.Data[4:8], numModels)
+
+	// write each model to the page
+	offset := 8
+	for _, model := range models {
+		modelBytes := model.ToBytes()
+		copy(p.Data[offset:offset+util.Model_SIZE], modelBytes)
+		offset += util.Model_SIZE
+	}
+
+	return p
+}
+
+/*
+Read the model vector from the page
+*/
+func (p *Page) ToModelVector() *ModelCollections {
+	// read the model level from the page
+	modelLevel := binary.BigEndian.Uint32(p.Data[0:4])
+
+	// read the number of models from the page
+	numModels := binary.BigEndian.Uint32(p.Data[4:8])
+
+	models := make([]*util.KeyModel, 0, numModels)
+
+	// read each model from the page
+	offset := 8
+	for i := uint32(0); i < numModels; i++ {
+		if offset+util.Model_SIZE > PAGE_SIZE {
+			panic("exceed page size")
+		}
+
+		modelBytes := p.Data[offset : offset+util.Model_SIZE]
+		model := util.KeyModelFromBytes(modelBytes)
+		models = append(models, model)
+		offset += util.Model_SIZE
+	}
+
+	return &ModelCollections{
+		V:          models,
+		ModelLevel: int(modelLevel),
+	}
+}

@@ -1,4 +1,4 @@
-package run
+package disktable
 
 import (
 	"VLStore/util"
@@ -44,23 +44,23 @@ func TestLevelRunHash(t *testing.T) {
 		os.RemoveAll(dirName)
 	}
 
-	// 创建测试目录
-	err := os.MkdirAll(dirName, 0755)
-	if err != nil {
-		t.Fatalf("Failed to create test directory: %v", err)
-	}
-	defer os.RemoveAll(dirName) // 测试结束后清理
+		// 创建测试目录
+		err := os.MkdirAll(dirName, 0755)
+		if err != nil {
+			t.Fatalf("Failed to create test directory: %v", err)
+		}
+		defer os.RemoveAll(dirName) // 测试结束后清理
 
-	// 创建随机KeyValue数据
-	r := rand.New(rand.NewSource(1))
-	keyValues := make([]util.KeyValue, 0)
+		// 创建随机KeyValue数据
+		r := rand.New(rand.NewSource(1))
+		keyValues := make([]util.KeyValue, 0)
 
-	// 添加最小键和最大键
-	minKey := util.Key(0)
-	maxKey := util.Key(^uint(0) >> 1) // 最大int值
+		// 添加最小键和最大键
+		minKey := util.Key(0)
+		maxKey := util.Key(^uint(0) >> 1) // 最大int值
 
-	minValue := make([]byte, 32)
-	maxValue := make([]byte, 32)
+		minValue := make([]byte, 32)
+		maxValue := make([]byte, 32)
 
 	keyValues = append(keyValues, util.KeyValue{Key: minKey, Value: minValue})
 
@@ -94,8 +94,6 @@ func TestLevelRunHash(t *testing.T) {
 	fanout := 5
 	n := 2
 	runID := 1
-	levelID := 0
-	k := 2
 
 	// 创建配置
 	configs := util.NewConfigs(
@@ -104,11 +102,10 @@ func TestLevelRunHash(t *testing.T) {
 		epsilon,
 		dirName,
 		n,
-		k,
 	)
 
 	// 构建运行
-	run, err := ConstructRunByInMemoryTree(keyValues, it, runID, levelID, dirName, epsilon, fanout, configs.MaxNumOfStatesInARun(levelID), 1, k)
+	run, err := ConstructRunByInMemoryTree(keyValues, it, runID, dirName, epsilon, fanout)
 	if err != nil {
 		t.Fatalf("Failed to construct run: %v", err)
 	}
@@ -119,7 +116,7 @@ func TestLevelRunHash(t *testing.T) {
 	run = nil
 
 	// 加载运行
-	loadedRun, err := Load(runID, levelID, configs)
+	loadedRun, err := Load(runID, configs)
 	if err != nil {
 		t.Fatalf("Failed to load run: %v", err)
 	}
@@ -127,7 +124,7 @@ func TestLevelRunHash(t *testing.T) {
 	fmt.Printf("Loaded run digest: %x\n", loadedRun.Digest)
 
 	// 搜索键
-	result := loadedRun.SearchRun(key1, configs, nil)
+	result := loadedRun.SearchTable(key1, configs, nil)
 	if result == nil {
 		t.Errorf("Failed to find key %d", key1)
 	} else {
@@ -136,7 +133,7 @@ func TestLevelRunHash(t *testing.T) {
 
 	// 搜索随机键（应该不存在）
 	randomKey := util.Key(r.Int63())
-	result = loadedRun.SearchRun(randomKey, configs, nil)
+	result = loadedRun.SearchTable(randomKey, configs, nil)
 	if result != nil {
 		t.Errorf("Unexpectedly found random key %d", randomKey)
 	}
@@ -192,21 +189,10 @@ func TestInMemoryMergeAndRunConstruction(t *testing.T) {
 		iterators = append(iterators, it)
 	}
 
-	// 创建配置
-	configs := util.NewConfigs(
-		fanout,
-		fanout,
-		epsilon,
-		dirName,
-		n,
-		k,
-	)
-
 	// 构建运行
 	runID := 1
-	levelID := 0
 
-	run, err := ConstructRunByInMemoryTree(keyValues, iterators[0], runID, levelID, dirName, epsilon, fanout, configs.MaxNumOfStatesInARun(levelID), 1, k)
+	run, err := ConstructRunByInMemoryTree(keyValues, iterators[0], runID, dirName, epsilon, fanout)
 	if err != nil {
 		t.Fatalf("Failed to construct run: %v", err)
 	}
@@ -246,7 +232,6 @@ func TestProveAndVerify(t *testing.T) {
 
 	// Setup configuration
 	runID := 1
-	levelID := 0
 
 	configs := util.NewConfigs(
 		fanout,
@@ -254,11 +239,10 @@ func TestProveAndVerify(t *testing.T) {
 		epsilon,
 		dirName,
 		n,
-		2, // size ratio
 	)
 
 	// Construct run
-	run, err := ConstructRunByInMemoryTree(keyValues, it, runID, levelID, dirName, epsilon, fanout, configs.MaxNumOfStatesInARun(levelID), 1, 2)
+	run, err := ConstructRunByInMemoryTree(keyValues, it, runID, dirName, epsilon, fanout)
 	if err != nil {
 		t.Fatalf("Failed to construct run: %v", err)
 	}

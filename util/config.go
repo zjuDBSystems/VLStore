@@ -5,6 +5,7 @@ import (
 )
 
 type Configs struct {
+	TreeFanout   int    // fanout of BMBTree
 	Fanout       int    // fanout of the MHT
 	Epsilon      int    // upper error bound of the piecewise model
 	DirName      string // directory name of the storage
@@ -12,8 +13,9 @@ type Configs struct {
 	SizeRatio    int    // ratio of the number of states in between the two consecutive levels
 }
 
-func NewConfigs(fanout int, epsilon int, dirName string, baseStateNum int, sizeRatio int) *Configs {
+func NewConfigs(treeFanout int, fanout int, epsilon int, dirName string, baseStateNum int, sizeRatio int) *Configs {
 	return &Configs{
+		TreeFanout:   treeFanout,
 		Fanout:       fanout,
 		Epsilon:      epsilon,
 		DirName:      dirName,
