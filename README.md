@@ -1,2 +1,2 @@
-# template
-Template repo for new project
+# VLStore
+An ADS storage engine for logging
